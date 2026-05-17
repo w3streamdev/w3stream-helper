@@ -7,9 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       extension_id:
-        description: 'Chrome extension ID (host_permissions allowed_origin)'
-        required: true
-        default: 'replace-me-when-extension-is-published'
+        description: 'Chrome extension ID (overrides repo variable EXTENSION_ID)'
+        required: false
+        # Leave blank by default so the resolver step falls back to vars.EXTENSION_ID.
+        default: ''
 
 permissions:
   contents: write   # for releases
@@ -51,17 +52,31 @@ jobs:
           if [[ -z "$ID" ]]; then
             ID="${{ vars.EXTENSION_ID }}"
           fi
-          if [[ -z "$ID" ]]; then
-            echo "::error::EXTENSION_ID must be set as workflow input or repo variable" >&2
+          # Reject the legacy placeholder so a stale workflow run can't slip
+          # a manifest with the wrong allowed_origins into a built installer.
+          if [[ -z "$ID" || "$ID" == "replace-me-when-extension-is-published" ]]; then
+            echo "::error::EXTENSION_ID is empty or placeholder. Pass it as workflow input or set repo variable EXTENSION_ID." >&2
             exit 1
           fi
           echo "extension_id=$ID" >> "$GITHUB_OUTPUT"
 
       - name: Install NSIS
-        run: choco install nsis -y --no-progress
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          # Chocolatey installs NSIS to "C:\Program Files (x86)\NSIS\" but does
+          # NOT update PATH for the current step's shell. Append the install
+          # directory to GITHUB_PATH so subsequent steps can find makensis.exe.
+          $nsisDir = 'C:\Program Files (x86)\NSIS'
+          if (-not (Test-Path "$nsisDir\makensis.exe")) {
+            throw "makensis.exe not found under $nsisDir after install"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisDir
+          Write-Host "Added $nsisDir to GITHUB_PATH"
 
       - name: Build installer
         working-directory: installer
+        shell: pwsh
         run: |
           makensis "/DVERSION=${{ steps.ver.outputs.version }}" "/DEXTENSION_ID=${{ steps.ext.outputs.extension_id }}" w3stream-helper.nsi
 
