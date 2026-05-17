@@ -18,6 +18,13 @@
   !define VERSION "0.0.0"
 !endif
 
+!ifndef FILE_VERSION
+  ; VIProductVersion requires strictly X.X.X.X.  If CI didn't compute it,
+  ; default to the version with .0 appended (only valid if VERSION itself
+  ; is purely numeric — release tags only).
+  !define FILE_VERSION "${VERSION}.0"
+!endif
+
 !ifndef EXTENSION_ID
   !error "EXTENSION_ID must be defined: -DEXTENSION_ID=<chrome-extension-id>"
 !endif
@@ -45,7 +52,7 @@ BrandingText "w3stream"
 
 !insertmacro MUI_LANGUAGE "English"
 
-VIProductVersion "${VERSION}.0"
+VIProductVersion "${FILE_VERSION}"
 VIAddVersionKey  "ProductName"     "w3stream Helper"
 VIAddVersionKey  "FileDescription" "w3stream Agent native helper"
 VIAddVersionKey  "FileVersion"     "${VERSION}"

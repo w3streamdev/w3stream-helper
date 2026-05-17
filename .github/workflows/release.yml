@@ -38,11 +38,26 @@ jobs:
         id: ver
         shell: bash
         run: |
+          # `version`        — display string; may include -dev.N
+          # `file_version`   — strictly X.X.X.X for NSIS VIProductVersion
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            V="${GITHUB_REF#refs/tags/v}"
           else
-            echo "version=0.1.0-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            V="0.1.0-dev.${GITHUB_RUN_NUMBER}"
           fi
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+
+          # Derive 4-tuple: strip everything after the first non-digit/dot,
+          # keep first 3 parts, pad to 4 with .0 or with GITHUB_RUN_NUMBER.
+          BASE="${V%%-*}"                         # e.g. 0.1.0
+          IFS='.' read -r A B C D <<<"${BASE}"
+          A="${A:-0}"; B="${B:-0}"; C="${C:-0}"; D="${D:-0}"
+          # Use run number as the 4th component for dev builds so reinstalls
+          # show as newer in Windows Add/Remove Programs.
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            D="${GITHUB_RUN_NUMBER}"
+          fi
+          echo "file_version=${A}.${B}.${C}.${D}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve extension ID
         id: ext
@@ -78,7 +93,7 @@ jobs:
         working-directory: installer
         shell: pwsh
         run: |
-          makensis "/DVERSION=${{ steps.ver.outputs.version }}" "/DEXTENSION_ID=${{ steps.ext.outputs.extension_id }}" w3stream-helper.nsi
+          makensis "/DVERSION=${{ steps.ver.outputs.version }}" "/DFILE_VERSION=${{ steps.ver.outputs.file_version }}" "/DEXTENSION_ID=${{ steps.ext.outputs.extension_id }}" w3stream-helper.nsi
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
