@@ -52,6 +52,18 @@ BrandingText "w3stream"
 
 !insertmacro MUI_LANGUAGE "English"
 
+; Default path of HidHide's CLI after the MSI installs it. The MSI ships
+; signed by Nefarius and uses Program Files unconditionally regardless
+; of per-user install for the helper, because the driver itself is
+; machine-wide.
+!define HIDHIDE_CLI "$PROGRAMFILES64\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe"
+
+; Fortnite's main process — added to HidHide's blocked-apps list so the
+; physical pad is invisible while Fortnite runs. Keep in sync with
+; src/hidhide.rs::FORTNITE_EXE; if Epic renames this binary in a future
+; patch both constants need to change together.
+!define FORTNITE_EXE "FortniteClient-Win64-Shipping.exe"
+
 VIProductVersion "${FILE_VERSION}"
 VIAddVersionKey  "ProductName"     "w3stream Helper"
 VIAddVersionKey  "FileDescription" "w3stream Agent native helper"
@@ -64,6 +76,83 @@ Section "Install"
   ; Helper binary. Built by CI before invoking makensis.
   File "..\target\x86_64-pc-windows-msvc\release\w3stream-helper.exe"
   Rename "$INSTDIR\w3stream-helper.exe" "$INSTDIR\helper.exe"
+
+  ; --- ViGEmBus driver ---
+  ; Bundled .exe is staged into installer\vendor\ViGEmBus.exe by CI
+  ; (release.yml fetches the signed Nefarius release and verifies the
+  ; pinned SHA-256). Silent install via /quiet /norestart per
+  ; Nefarius docs. We do NOT uninstall ViGEmBus on helper uninstall
+  ; because reWASD, DS4Windows, and others depend on it.
+  IfFileExists "$EXEDIR\vendor\ViGEmBus.exe" vigem_present vigem_skip
+vigem_present:
+    DetailPrint "Installing ViGEmBus driver (silent, may take 30s)..."
+    ; Nefarius's signed setup uses standard Inno/WiX exit codes:
+    ;   0    success
+    ;   1602 user cancel (shouldn't happen with /quiet)
+    ;   1638 already installed at the same or newer version (success)
+    ;   3010 install ok but reboot required
+    ExecWait '"$EXEDIR\vendor\ViGEmBus.exe" /quiet /norestart' $0
+    StrCmp $0 "0"    vigem_done
+    StrCmp $0 "1638" vigem_done
+    StrCmp $0 "3010" vigem_reboot
+    DetailPrint "ViGEmBus install returned $0; continuing without virtual pad support"
+    Goto vigem_skip
+  vigem_reboot:
+    DetailPrint "ViGEmBus installed; reboot required for the driver to load"
+    SetRebootFlag true
+  vigem_done:
+  vigem_skip:
+
+  ; --- HidHide driver ---
+  ; Bundled .msi is staged into installer\vendor\HidHide.msi by CI
+  ; (release.yml fetches the signed Nefarius release and verifies the
+  ; pinned SHA-256). If the file is missing we keep installing — the
+  ; helper degrades gracefully without HidHide, only the suppress-the-
+  ; physical-pad behaviour is lost.
+  IfFileExists "$EXEDIR\vendor\HidHide.msi" hidhide_present hidhide_skip
+hidhide_present:
+    DetailPrint "Installing HidHide driver (silent, may take 30s)..."
+    ; msiexec returns 0 (installed), 1638 (already same version), 1641/3010
+    ; (reboot required). Treat all of these as success.
+    ExecWait '"$SYSDIR\msiexec.exe" /i "$EXEDIR\vendor\HidHide.msi" /qn /norestart' $0
+    StrCmp $0 "0"    hidhide_configure
+    StrCmp $0 "1638" hidhide_configure
+    StrCmp $0 "1641" hidhide_reboot
+    StrCmp $0 "3010" hidhide_reboot
+    DetailPrint "HidHide install returned $0; continuing without HidHide config"
+    Goto hidhide_skip
+  hidhide_reboot:
+    DetailPrint "HidHide installed; a reboot will be required for the driver to load"
+    SetRebootFlag true
+    ; fall through and try to configure anyway — CLI exits cleanly even
+    ; before the driver loads.
+  hidhide_configure:
+    ; Whitelist the helper so HidHide doesn't also hide the pad from US.
+    ; Without this the forwarder can't read XInputGetState either.
+    ExecWait '"${HIDHIDE_CLI}" --app-reg "$INSTDIR\helper.exe"' $1
+    DetailPrint "HidHide app-reg helper returned $1"
+    ; Block Fortnite so it stops seeing the physical pad.
+    ExecWait '"${HIDHIDE_CLI}" --app-reg "${FORTNITE_EXE}"' $2
+    DetailPrint "HidHide app-reg fortnite returned $2"
+    ; Turn the HidHide cloak on (it's a per-machine toggle).
+    ExecWait '"${HIDHIDE_CLI}" --cloak-on' $3
+    DetailPrint "HidHide cloak-on returned $3"
+    ; Record what we changed so the uninstaller can revert cleanly
+    ; without touching entries another app/user added.
+    FileOpen $4 "$INSTDIR\hidhide-managed.json" w
+    FileWrite $4 '{$\r$\n'
+    FileWrite $4 '  "apps_added": [$\r$\n'
+    StrCpy $5 "$INSTDIR\helper.exe"
+    Push $5
+    Call EscapeJSONBackslashes
+    Pop $6
+    FileWrite $4 '    "$6",$\r$\n'
+    FileWrite $4 '    "${FORTNITE_EXE}"$\r$\n'
+    FileWrite $4 '  ],$\r$\n'
+    FileWrite $4 '  "cloak_was_on": true$\r$\n'
+    FileWrite $4 '}$\r$\n'
+    FileClose $4
+  hidhide_skip:
 
   ; Render the native-messaging manifest with absolute helper path.
   ; NSIS-double-backslash because the manifest is JSON.
@@ -104,6 +193,18 @@ Section "Uninstall"
   DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\io.connect3.w3stream.helper"
   DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\io.connect3.w3stream.helper"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\w3stream-helper"
+
+  ; Revert only the HidHide entries we added. We don't touch the cloak
+  ; toggle because another app (reWASD/DS4Windows) may rely on it.
+  ; We don't uninstall the HidHide MSI either — that's a manual user
+  ; decision.
+  IfFileExists "${HIDHIDE_CLI}" 0 hidhide_revert_skip
+    ExecWait '"${HIDHIDE_CLI}" --app-unreg "$INSTDIR\helper.exe"'
+    ExecWait '"${HIDHIDE_CLI}" --app-unreg "${FORTNITE_EXE}"'
+  hidhide_revert_skip:
+  Delete "$INSTDIR\hidhide-managed.json"
+
+  ; ViGEmBus is NOT uninstalled here on purpose — other apps depend on it.
 
   Delete "$INSTDIR\helper.exe"
   Delete "$INSTDIR\manifest.json"

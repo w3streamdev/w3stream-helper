@@ -19,12 +19,20 @@ simplelog = "0.12"
 uuid = { version = "1", features = ["v4"] }
 once_cell = "1"
 
+[target.'cfg(windows)'.dependencies]
+# ViGEmBus userland client — creates the virtual Xbox 360 pad that the game sees.
+# Windows-only; the crate links against the bundled vigemclient C lib.
+vigem-client = "0.1"
+
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.58"
 features = [
     "Win32_Foundation",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
+    # XInputGetState / XInputGetCapabilities for reading the physical pad
+    # that HidHide has hidden from Fortnite but still exposes to us.
+    "Win32_UI_Input_XboxController",
 ]
 
 [profile.release]
