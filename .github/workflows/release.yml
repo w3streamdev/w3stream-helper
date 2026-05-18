@@ -95,10 +95,10 @@ jobs:
         id: drivers
         shell: pwsh
         env:
-          HIDHIDE_URL:    'https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.msi'
-          HIDHIDE_SHA256: 'TODO_FILL_BEFORE_RELEASE_HIDHIDE_SHA256'
+          HIDHIDE_URL:    'https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe'
+          HIDHIDE_SHA256: 'f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6'
           VIGEMBUS_URL:    'https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe'
-          VIGEMBUS_SHA256: 'TODO_FILL_BEFORE_RELEASE_VIGEMBUS_SHA256'
+          VIGEMBUS_SHA256: '89220a7865076b342892f98865f3499fb7c4cfd673159e89d352c360fd014c6a'
         run: |
           $ErrorActionPreference = 'Stop'
           $vendor = Join-Path $PWD 'installer\vendor'
@@ -119,7 +119,7 @@ jobs:
             Write-Host "OK $destName ($actual)"
           }
 
-          FetchAndVerify $env:HIDHIDE_URL  $env:HIDHIDE_SHA256  'HidHide.msi'
+          FetchAndVerify $env:HIDHIDE_URL  $env:HIDHIDE_SHA256  'HidHide.exe'
           FetchAndVerify $env:VIGEMBUS_URL $env:VIGEMBUS_SHA256 'ViGEmBus.exe'
 
       - name: Install NSIS

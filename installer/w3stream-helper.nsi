@@ -52,10 +52,11 @@ BrandingText "w3stream"
 
 !insertmacro MUI_LANGUAGE "English"
 
-; Default path of HidHide's CLI after the MSI installs it. The MSI ships
-; signed by Nefarius and uses Program Files unconditionally regardless
+; Default path of HidHide's CLI after the bundled .exe installs it.
+; Nefarius's signed setup uses Program Files unconditionally regardless
 ; of per-user install for the helper, because the driver itself is
-; machine-wide.
+; machine-wide. (Nefarius switched from .msi to a WiX-Burn .exe bundle in
+; v1.5.230; the install layout under Program Files is unchanged.)
 !define HIDHIDE_CLI "$PROGRAMFILES64\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe"
 
 ; Fortnite's main process — added to HidHide's blocked-apps list so the
@@ -71,6 +72,16 @@ VIAddVersionKey  "FileVersion"     "${VERSION}"
 VIAddVersionKey  "CompanyName"     "Connect3"
 
 Section "Install"
+  ; Extract the bundled driver installers into $PLUGINSDIR — a temp
+  ; directory NSIS creates per-install and deletes on exit, so streamers
+  ; only ever download the single installer .exe. The release workflow
+  ; stages vendor/HidHide.exe + vendor/ViGEmBus.exe before invoking
+  ; makensis (release.yml::Fetch + verify driver installers).
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File "vendor\ViGEmBus.exe"
+  File "vendor\HidHide.exe"
+
   SetOutPath "$INSTDIR"
 
   ; Helper binary. Built by CI before invoking makensis.
@@ -78,12 +89,10 @@ Section "Install"
   Rename "$INSTDIR\w3stream-helper.exe" "$INSTDIR\helper.exe"
 
   ; --- ViGEmBus driver ---
-  ; Bundled .exe is staged into installer\vendor\ViGEmBus.exe by CI
-  ; (release.yml fetches the signed Nefarius release and verifies the
-  ; pinned SHA-256). Silent install via /quiet /norestart per
-  ; Nefarius docs. We do NOT uninstall ViGEmBus on helper uninstall
-  ; because reWASD, DS4Windows, and others depend on it.
-  IfFileExists "$EXEDIR\vendor\ViGEmBus.exe" vigem_present vigem_skip
+  ; Silent install via /quiet /norestart per Nefarius docs. We do NOT
+  ; uninstall ViGEmBus on helper uninstall because reWASD, DS4Windows,
+  ; and others depend on it.
+  IfFileExists "$PLUGINSDIR\ViGEmBus.exe" vigem_present vigem_skip
 vigem_present:
     DetailPrint "Installing ViGEmBus driver (silent, may take 30s)..."
     ; Nefarius's signed setup uses standard Inno/WiX exit codes:
@@ -91,7 +100,7 @@ vigem_present:
     ;   1602 user cancel (shouldn't happen with /quiet)
     ;   1638 already installed at the same or newer version (success)
     ;   3010 install ok but reboot required
-    ExecWait '"$EXEDIR\vendor\ViGEmBus.exe" /quiet /norestart' $0
+    ExecWait '"$PLUGINSDIR\ViGEmBus.exe" /quiet /norestart' $0
     StrCmp $0 "0"    vigem_done
     StrCmp $0 "1638" vigem_done
     StrCmp $0 "3010" vigem_reboot
@@ -104,17 +113,17 @@ vigem_present:
   vigem_skip:
 
   ; --- HidHide driver ---
-  ; Bundled .msi is staged into installer\vendor\HidHide.msi by CI
-  ; (release.yml fetches the signed Nefarius release and verifies the
-  ; pinned SHA-256). If the file is missing we keep installing — the
-  ; helper degrades gracefully without HidHide, only the suppress-the-
-  ; physical-pad behaviour is lost.
-  IfFileExists "$EXEDIR\vendor\HidHide.msi" hidhide_present hidhide_skip
+  ; Nefarius v1.5.230 switched from a bare MSI to a WiX Burn .exe bundle
+  ; — same exit codes, just a different invocation. If the file is
+  ; missing we keep installing — the helper degrades gracefully without
+  ; HidHide, only the suppress-the-physical-pad behaviour is lost.
+  IfFileExists "$PLUGINSDIR\HidHide.exe" hidhide_present hidhide_skip
 hidhide_present:
     DetailPrint "Installing HidHide driver (silent, may take 30s)..."
-    ; msiexec returns 0 (installed), 1638 (already same version), 1641/3010
+    ; WiX Burn .exe accepts /quiet /norestart and returns standard MSI
+    ; exit codes: 0 (installed), 1638 (already same version), 1641/3010
     ; (reboot required). Treat all of these as success.
-    ExecWait '"$SYSDIR\msiexec.exe" /i "$EXEDIR\vendor\HidHide.msi" /qn /norestart' $0
+    ExecWait '"$PLUGINSDIR\HidHide.exe" /quiet /norestart' $0
     StrCmp $0 "0"    hidhide_configure
     StrCmp $0 "1638" hidhide_configure
     StrCmp $0 "1641" hidhide_reboot
