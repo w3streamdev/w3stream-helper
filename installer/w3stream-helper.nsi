@@ -59,12 +59,6 @@ BrandingText "w3stream"
 ; v1.5.230; the install layout under Program Files is unchanged.)
 !define HIDHIDE_CLI "$PROGRAMFILES64\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe"
 
-; Fortnite's main process — added to HidHide's blocked-apps list so the
-; physical pad is invisible while Fortnite runs. Keep in sync with
-; src/hidhide.rs::FORTNITE_EXE; if Epic renames this binary in a future
-; patch both constants need to change together.
-!define FORTNITE_EXE "FortniteClient-Win64-Shipping.exe"
-
 VIProductVersion "${FILE_VERSION}"
 VIAddVersionKey  "ProductName"     "w3stream Helper"
 VIAddVersionKey  "FileDescription" "w3stream Agent native helper"
@@ -88,66 +82,62 @@ Section "Install"
   File "..\target\x86_64-pc-windows-msvc\release\w3stream-helper.exe"
   Rename "$INSTDIR\w3stream-helper.exe" "$INSTDIR\helper.exe"
 
-  ; --- ViGEmBus driver ---
-  ; Silent install via /quiet /norestart per Nefarius docs. We do NOT
-  ; uninstall ViGEmBus on helper uninstall because reWASD, DS4Windows,
-  ; and others depend on it.
-  IfFileExists "$PLUGINSDIR\ViGEmBus.exe" vigem_present vigem_skip
-vigem_present:
-    DetailPrint "Installing ViGEmBus driver (silent, may take 30s)..."
-    ; Nefarius's signed setup uses standard Inno/WiX exit codes:
-    ;   0    success
-    ;   1602 user cancel (shouldn't happen with /quiet)
-    ;   1638 already installed at the same or newer version (success)
-    ;   3010 install ok but reboot required
-    ExecWait '"$PLUGINSDIR\ViGEmBus.exe" /quiet /norestart' $0
-    StrCmp $0 "0"    vigem_done
-    StrCmp $0 "1638" vigem_done
-    StrCmp $0 "3010" vigem_reboot
-    DetailPrint "ViGEmBus install returned $0; continuing without virtual pad support"
-    Goto vigem_skip
-  vigem_reboot:
-    DetailPrint "ViGEmBus installed; reboot required for the driver to load"
-    SetRebootFlag true
-  vigem_done:
-  vigem_skip:
+  ; --- Driver install (single UAC prompt) ---
+  ;
+  ; Both Nefarius bundles ship with an `asInvoker` manifest, so a plain
+  ; ExecWait from this user-level NSIS can't drive their internal MSIs
+  ; with admin rights -- the MSI returns 1925 / fatal 1603. The only
+  ; userland fix is to launch them via ShellExecuteEx with the "runas"
+  ; verb, which triggers a UAC consent dialog. To keep that down to ONE
+  ; prompt for the streamer we shell out to a tiny .bat that chains:
+  ;   1. ViGEmBus.exe /passive /norestart     (kernel + bus PnP device)
+  ;   2. HidHide.exe  /passive /norestart     (kernel + control device)
+  ;   3. HidHideCLI --app-reg <helper.exe>    (whitelist so the helper
+  ;      itself can still see the physical pad once the cloak is on)
+  ;   4. HidHideCLI --cloak-on                (machine-wide HID cloak)
+  ;
+  ; If the user declines UAC the bat never runs; the helper still works
+  ; for keystroke-only actions and `health.gamepad.available` will be
+  ; false so the extension can hint at the missing setup step.
+  ;
+  ; Note: NSIS's ExecShellWait does not return the child's exit code, so
+  ; we infer success post-hoc from the presence of the HidHide CLI. The
+  ; helper's own VirtualPad probe at startup is the source of truth for
+  ; whether the install actually took.
+  IfFileExists "$PLUGINSDIR\ViGEmBus.exe" 0 driver_skip
+  IfFileExists "$PLUGINSDIR\HidHide.exe"  0 driver_skip
 
-  ; --- HidHide driver ---
-  ; Nefarius v1.5.230 switched from a bare MSI to a WiX Burn .exe bundle
-  ; — same exit codes, just a different invocation. If the file is
-  ; missing we keep installing — the helper degrades gracefully without
-  ; HidHide, only the suppress-the-physical-pad behaviour is lost.
-  IfFileExists "$PLUGINSDIR\HidHide.exe" hidhide_present hidhide_skip
-hidhide_present:
-    DetailPrint "Installing HidHide driver (silent, may take 30s)..."
-    ; WiX Burn .exe accepts /quiet /norestart and returns standard MSI
-    ; exit codes: 0 (installed), 1638 (already same version), 1641/3010
-    ; (reboot required). Treat all of these as success.
-    ExecWait '"$PLUGINSDIR\HidHide.exe" /quiet /norestart' $0
-    StrCmp $0 "0"    hidhide_configure
-    StrCmp $0 "1638" hidhide_configure
-    StrCmp $0 "1641" hidhide_reboot
-    StrCmp $0 "3010" hidhide_reboot
-    DetailPrint "HidHide install returned $0; continuing without HidHide config"
-    Goto hidhide_skip
-  hidhide_reboot:
-    DetailPrint "HidHide installed; a reboot will be required for the driver to load"
-    SetRebootFlag true
-    ; fall through and try to configure anyway — CLI exits cleanly even
-    ; before the driver loads.
-  hidhide_configure:
-    ; Whitelist the helper so HidHide doesn't also hide the pad from US.
-    ; Without this the forwarder can't read XInputGetState either.
-    ExecWait '"${HIDHIDE_CLI}" --app-reg "$INSTDIR\helper.exe"' $1
-    DetailPrint "HidHide app-reg helper returned $1"
-    ; Block Fortnite so it stops seeing the physical pad.
-    ExecWait '"${HIDHIDE_CLI}" --app-reg "${FORTNITE_EXE}"' $2
-    DetailPrint "HidHide app-reg fortnite returned $2"
-    ; Turn the HidHide cloak on (it's a per-machine toggle).
-    ExecWait '"${HIDHIDE_CLI}" --cloak-on' $3
-    DetailPrint "HidHide cloak-on returned $3"
-    ; Record what we changed so the uninstaller can revert cleanly
-    ; without touching entries another app/user added.
+  FileOpen $4 "$PLUGINSDIR\drivers-bootstrap.bat" w
+  FileWrite $4 '@echo off$\r$\n'
+  FileWrite $4 'echo Installing ViGEmBus (Nefarius virtual gamepad driver)...$\r$\n'
+  FileWrite $4 '"%~dp0ViGEmBus.exe" /passive /norestart$\r$\n'
+  FileWrite $4 'echo Installing HidHide...$\r$\n'
+  FileWrite $4 '"%~dp0HidHide.exe" /passive /norestart$\r$\n'
+  FileWrite $4 'set CLI=%ProgramFiles%\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe$\r$\n'
+  FileWrite $4 'if exist "%CLI%" ($\r$\n'
+  FileWrite $4 '  "%CLI%" --app-reg "%~1"$\r$\n'
+  FileWrite $4 '  "%CLI%" --cloak-on$\r$\n'
+  FileWrite $4 ')$\r$\n'
+  FileWrite $4 'exit /b 0$\r$\n'
+  FileClose $4
+
+  DetailPrint "Installing ViGEmBus + HidHide drivers (single UAC consent expected)..."
+  ExecShellWait "runas" "$SYSDIR\cmd.exe" '/c "$PLUGINSDIR\drivers-bootstrap.bat" "$INSTDIR\helper.exe"' SW_SHOWNORMAL
+
+  ; Driver installers (Burn .exe bundles) set the system reboot-pending
+  ; flag internally when needed; we propagate that as a recommendation
+  ; here because the freshly-installed virtual bus PnP device sometimes
+  ; doesn't enumerate cleanly until a reboot.
+  SetRebootFlag true
+
+  ; Ledger of HidHide entries we added, so the uninstaller can revert
+  ; cleanly without touching anything the user (or reWASD/DS4Windows)
+  ; might have added. Only the helper itself goes on the whitelist --
+  ; HidHide has no blocklist: --app-reg lists apps that should still
+  ; see *hidden* devices, the cloak does the actual hiding by device
+  ; instance path, and the device-hide list is left for the streamer
+  ; to populate via the HidHide tray UI (or a future helper feature).
+  IfFileExists "${HIDHIDE_CLI}" 0 hidhide_skip_ledger
     FileOpen $4 "$INSTDIR\hidhide-managed.json" w
     FileWrite $4 '{$\r$\n'
     FileWrite $4 '  "apps_added": [$\r$\n'
@@ -155,13 +145,17 @@ hidhide_present:
     Push $5
     Call EscapeJSONBackslashes
     Pop $6
-    FileWrite $4 '    "$6",$\r$\n'
-    FileWrite $4 '    "${FORTNITE_EXE}"$\r$\n'
+    FileWrite $4 '    "$6"$\r$\n'
     FileWrite $4 '  ],$\r$\n'
     FileWrite $4 '  "cloak_was_on": true$\r$\n'
     FileWrite $4 '}$\r$\n'
     FileClose $4
-  hidhide_skip:
+  hidhide_skip_ledger:
+
+  Goto drivers_done
+  driver_skip:
+    DetailPrint "Driver bundles not present in installer staging; skipping driver install."
+  drivers_done:
 
   ; Render the native-messaging manifest with absolute helper path.
   ; NSIS-double-backslash because the manifest is JSON.
@@ -205,11 +199,13 @@ Section "Uninstall"
 
   ; Revert only the HidHide entries we added. We don't touch the cloak
   ; toggle because another app (reWASD/DS4Windows) may rely on it.
-  ; We don't uninstall the HidHide MSI either — that's a manual user
-  ; decision.
+  ; We don't uninstall the HidHide bundle either -- that's a manual
+  ; decision for the streamer. The CLI itself needs admin to mutate
+  ; the config, but the uninstaller runs at user-level and we can't
+  ; fire a UAC prompt mid-uninstall without the UAC plugin; leaving
+  ; the helper on the whitelist is harmless if HidHide is also gone.
   IfFileExists "${HIDHIDE_CLI}" 0 hidhide_revert_skip
     ExecWait '"${HIDHIDE_CLI}" --app-unreg "$INSTDIR\helper.exe"'
-    ExecWait '"${HIDHIDE_CLI}" --app-unreg "${FORTNITE_EXE}"'
   hidhide_revert_skip:
   Delete "$INSTDIR\hidhide-managed.json"
 
