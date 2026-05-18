@@ -2,3 +2,5 @@
 **/*.rs.bk
 *.log
 installer/*.exe
+# Driver installers are fetched + SHA-256 verified by CI; never commit them.
+installer/vendor/
