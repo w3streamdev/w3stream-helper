@@ -11,10 +11,6 @@
 
 #![allow(dead_code)]
 
-use anyhow::Result;
-use std::thread::sleep;
-use std::time::Duration;
-
 /// XInput-compatible button bitfield. Re-exported under a stable name
 /// so the rest of the crate doesn't import vigem-client directly.
 ///
@@ -139,7 +135,9 @@ mod imp {
 #[cfg(not(windows))]
 mod imp {
     use super::*;
-    use anyhow::anyhow;
+    use anyhow::{anyhow, Result};
+    use std::thread::sleep;
+    use std::time::Duration;
 
     pub struct VirtualPad;
 

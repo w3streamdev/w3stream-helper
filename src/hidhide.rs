@@ -15,8 +15,9 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Default install path for the HidHide CLI shipped with the .msi.
-/// Same path on all Windows versions per HidHide's MSI defaults.
+/// Default install path for the HidHide CLI shipped with the signed setup.
+/// Same path on all Windows versions per HidHide's installer defaults
+/// (.exe bundle since v1.5.230; .msi before that — layout unchanged).
 const HIDHIDE_CLI: &str = r"C:\Program Files\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe";
 
 /// Fortnite's main executable name — this is what we add to HidHide's
