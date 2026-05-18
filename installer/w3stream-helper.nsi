@@ -77,6 +77,32 @@ Section "Install"
   File "..\target\x86_64-pc-windows-msvc\release\w3stream-helper.exe"
   Rename "$INSTDIR\w3stream-helper.exe" "$INSTDIR\helper.exe"
 
+  ; --- ViGEmBus driver ---
+  ; Bundled .exe is staged into installer\vendor\ViGEmBus.exe by CI
+  ; (release.yml fetches the signed Nefarius release and verifies the
+  ; pinned SHA-256). Silent install via /quiet /norestart per
+  ; Nefarius docs. We do NOT uninstall ViGEmBus on helper uninstall
+  ; because reWASD, DS4Windows, and others depend on it.
+  IfFileExists "$EXEDIR\vendor\ViGEmBus.exe" vigem_present vigem_skip
+vigem_present:
+    DetailPrint "Installing ViGEmBus driver (silent, may take 30s)..."
+    ; Nefarius's signed setup uses standard Inno/WiX exit codes:
+    ;   0    success
+    ;   1602 user cancel (shouldn't happen with /quiet)
+    ;   1638 already installed at the same or newer version (success)
+    ;   3010 install ok but reboot required
+    ExecWait '"$EXEDIR\vendor\ViGEmBus.exe" /quiet /norestart' $0
+    StrCmp $0 "0"    vigem_done
+    StrCmp $0 "1638" vigem_done
+    StrCmp $0 "3010" vigem_reboot
+    DetailPrint "ViGEmBus install returned $0; continuing without virtual pad support"
+    Goto vigem_skip
+  vigem_reboot:
+    DetailPrint "ViGEmBus installed; reboot required for the driver to load"
+    SetRebootFlag true
+  vigem_done:
+  vigem_skip:
+
   ; --- HidHide driver ---
   ; Bundled .msi is staged into installer\vendor\HidHide.msi by CI
   ; (release.yml fetches the signed Nefarius release and verifies the
