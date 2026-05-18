@@ -6,7 +6,7 @@ REM hello/health/enabled/trigger/panic round-trip, and prints responses.
 REM
 REM Streamer usage:
 REM   1. Install w3stream-helper.
-REM   2. Open a text window (Notepad, etc.) and focus it — the script
+REM   2. Open a text window (Notepad, etc.) and focus it - the script
 REM      will fire test_type_hi which sends keystrokes via SendInput to
 REM      whatever window has focus.
 REM   3. Double-click this .bat or run from a shell.

@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 # AutoFlush=true at construction, which triggers an internal Flush(). That
 # Flush writes the encoding preamble (UTF-8 BOM, EF BB BF) to the child's
 # stdin BEFORE any of our bytes. Force-clear the preamble by giving the
-# console a no-BOM UTF-8 encoding before we spawn — Process.StandardInput
+# console a no-BOM UTF-8 encoding before we spawn - Process.StandardInput
 # reads Console.InputEncoding when it constructs the StreamWriter.
 [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
 
@@ -81,7 +81,7 @@ Write-Host "[+] enabled: $(($resp.result | ConvertTo-Json -Compress -Depth 3))"
 
 Write-Host ""
 Write-Host "[+] Firing fortnite_emote_1. During the suspend window (~3s)"
-Write-Host "    push the physical stick — gamepad-tester should stay neutral."
+Write-Host "    push the physical stick - gamepad-tester should stay neutral."
 Write-Host ""
 
 Send-Msg @{

@@ -10,7 +10,7 @@ REM   2. Open https://gamepad-tester.com/ in Chrome.
 REM   3. Double-click this .bat.
 REM   4. While the script's 5-second suspend window is active, hold the
 REM      physical stick. gamepad-tester should NOT show stick movement
-REM      on the virtual pad — that confirms HidHide + forwarder-suspend
+REM      on the virtual pad - that confirms HidHide + forwarder-suspend
 REM      are working together.
 REM   5. After suspend ends, physical input should forward again.
 
