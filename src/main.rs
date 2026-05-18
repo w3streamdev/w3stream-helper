@@ -1,10 +1,10 @@
-mod protocol;
 mod actions;
 mod executor;
 mod forwarder;
 mod gamepad;
 mod hidhide;
 mod input;
+mod protocol;
 mod state;
 
 use anyhow::Result;
@@ -168,7 +168,10 @@ fn handle(state: &mut AppState, gamepad: &GamepadHealth, msg: Value) -> Value {
         })),
         "actions.list" => Ok(json!({ "actions": state.actions_list() })),
         "enabled" => {
-            let enabled = params.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let enabled = params
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             state.set_enabled(enabled);
             Ok(json!({ "ok": true, "enabled": enabled }))
         }

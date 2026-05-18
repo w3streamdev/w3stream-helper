@@ -164,8 +164,14 @@ impl ActionLibrary {
                     enabled: true,
                     cooldown_ms: 5000,
                     input_sequence: vec![
-                        InputStep::KeyTap { key: "H".into(), duration_ms: 80 },
-                        InputStep::KeyTap { key: "I".into(), duration_ms: 80 },
+                        InputStep::KeyTap {
+                            key: "H".into(),
+                            duration_ms: 80,
+                        },
+                        InputStep::KeyTap {
+                            key: "I".into(),
+                            duration_ms: 80,
+                        },
                     ],
                 },
                 Action {
@@ -180,7 +186,10 @@ impl ActionLibrary {
                     // safety net.
                     input_sequence: vec![
                         InputStep::SuspendForwarder { duration_ms: 3000 },
-                        InputStep::GamepadDpad { direction: DpadDir::Down, duration_ms: 200 },
+                        InputStep::GamepadDpad {
+                            direction: DpadDir::Down,
+                            duration_ms: 200,
+                        },
                         InputStep::Delay { duration_ms: 150 },
                         InputStep::GamepadButtonTap {
                             button: GamepadButton::A,

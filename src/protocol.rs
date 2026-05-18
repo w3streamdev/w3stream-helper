@@ -19,7 +19,9 @@ pub fn read_message<R: Read>(reader: &mut R) -> Result<Option<Value>> {
         return Ok(Some(Value::Null));
     }
     if len > MAX_MESSAGE_LEN {
-        return Err(anyhow!("message length {len} exceeds limit {MAX_MESSAGE_LEN}"));
+        return Err(anyhow!(
+            "message length {len} exceeds limit {MAX_MESSAGE_LEN}"
+        ));
     }
     let mut buf = vec![0u8; len as usize];
     reader.read_exact(&mut buf).context("reading body")?;
