@@ -24,12 +24,15 @@ use std::process::Command;
 /// Default install path for the HidHide CLI shipped with the signed setup.
 /// Same path on all Windows versions per HidHide's installer defaults
 /// (.exe bundle since v1.5.230; .msi before that -- layout unchanged).
-const HIDHIDE_CLI: &str = r"C:\Program Files\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe";
+const HIDHIDE_CLI: &str =
+    r"C:\Program Files\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HidHideStatus {
     pub cli_present: bool,
     pub helper_on_allowlist: Option<bool>,
+    pub fortnite_on_allowlist: Option<bool>,
+    pub cloak_enabled: Option<bool>,
     pub access_denied: bool,
     pub raw: Option<String>,
 }
@@ -42,10 +45,16 @@ impl HidHideStatus {
         if self.access_denied {
             return "unknown_needs_admin";
         }
-        match self.helper_on_allowlist {
-            Some(true) => "configured",
-            Some(false) => "helper_not_whitelisted",
-            None => "unknown",
+        match (
+            self.helper_on_allowlist,
+            self.fortnite_on_allowlist,
+            self.cloak_enabled,
+        ) {
+            (Some(false), _, _) => "helper_not_whitelisted",
+            (_, Some(true), _) => "fortnite_still_whitelisted",
+            (_, _, Some(false)) => "cloak_off",
+            (Some(true), Some(false), Some(true)) => "configured",
+            _ => "unknown",
         }
     }
 }
@@ -55,6 +64,8 @@ pub fn probe() -> HidHideStatus {
         return HidHideStatus {
             cli_present: false,
             helper_on_allowlist: None,
+            fortnite_on_allowlist: None,
+            cloak_enabled: None,
             access_denied: false,
             raw: None,
         };
@@ -70,17 +81,50 @@ pub fn probe() -> HidHideStatus {
         CliOutput::OtherErr => (String::new(), false),
     };
 
+    let cloak_enabled = if denied {
+        None
+    } else {
+        match run_cli(&["--cloak-state"]) {
+            CliOutput::Ok(s) => {
+                let l = s.to_lowercase();
+                Some(
+                    l.contains("on")
+                        || l.contains("enabled")
+                        || l.contains("true")
+                        || l.contains("1"),
+                )
+            }
+            _ => None,
+        }
+    };
+
     let helper_on_allowlist = if denied {
         None
     } else {
         helper_exe.map(|h| app_list.to_lowercase().contains(&h))
     };
 
+    let fortnite_on_allowlist = if denied {
+        None
+    } else {
+        Some(
+            app_list
+                .to_lowercase()
+                .contains("fortniteclient-win64-shipping.exe"),
+        )
+    };
+
     HidHideStatus {
         cli_present: true,
         helper_on_allowlist,
+        fortnite_on_allowlist,
+        cloak_enabled,
         access_denied: denied,
-        raw: if denied { None } else { Some(format!("apps:{}", app_list)) },
+        raw: if denied {
+            None
+        } else {
+            Some(format!("apps:{}", app_list))
+        },
     }
 }
 
@@ -108,8 +152,8 @@ fn run_cli(args: &[&str]) -> CliOutput {
     // stdout (not stderr) when invoked without admin. Detect that so
     // the health response can hint at the cause instead of falsely
     // claiming the helper isn't whitelisted.
-    let combined = String::from_utf8_lossy(&out.stdout).into_owned()
-        + &String::from_utf8_lossy(&out.stderr);
+    let combined =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     if combined.contains("0x0005") || combined.to_lowercase().contains("access is denied") {
         CliOutput::AccessDenied
     } else {

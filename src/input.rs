@@ -61,7 +61,11 @@ fn send_key(vk: u16, key_up: bool) -> Result<()> {
         VIRTUAL_KEY,
     };
 
-    let flags: KEYBD_EVENT_FLAGS = if key_up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) };
+    let flags: KEYBD_EVENT_FLAGS = if key_up {
+        KEYEVENTF_KEYUP
+    } else {
+        KEYBD_EVENT_FLAGS(0)
+    };
 
     let input = INPUT {
         r#type: INPUT_KEYBOARD,

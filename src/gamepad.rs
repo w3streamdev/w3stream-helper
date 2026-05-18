@@ -93,7 +93,9 @@ mod imp {
 
         pub fn set_state(&mut self, report: XUSBReport) -> Result<()> {
             let pad = XGamepad {
-                buttons: vigem_client::XButtons { raw: report.buttons },
+                buttons: vigem_client::XButtons {
+                    raw: report.buttons,
+                },
                 left_trigger: report.left_trigger,
                 right_trigger: report.right_trigger,
                 thumb_lx: report.thumb_lx,

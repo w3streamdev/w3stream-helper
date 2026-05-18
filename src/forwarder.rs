@@ -94,11 +94,11 @@ impl ForwarderHandle {
     pub fn suspend(&self, duration_ms: u64) {
         let target = now_ms().saturating_add(duration_ms);
         // Don't shorten an in-progress suspend if a longer one was queued.
-        let _ =
-            self.suspend_until_ms
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
-                    Some(cur.max(target))
-                });
+        let _ = self
+            .suspend_until_ms
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
+                Some(cur.max(target))
+            });
     }
 
     pub fn resume(&self) {
@@ -112,14 +112,20 @@ impl ForwarderHandle {
     /// Write a virtual-pad report directly. The action layer uses this
     /// to inject emote button presses while the forwarder is suspended.
     pub fn set_virtual(&self, report: XUSBReport) -> Result<()> {
-        let mut pad = self.pad.lock().map_err(|_| anyhow::anyhow!("pad mutex poisoned"))?;
+        let mut pad = self
+            .pad
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pad mutex poisoned"))?;
         pad.set_state(report)
     }
 
     /// Press a button on the virtual pad. Caller is responsible for
     /// calling `suspend` first if forwarding would clobber the press.
     pub fn press_button(&self, button: u16, duration_ms: u64) -> Result<()> {
-        let mut pad = self.pad.lock().map_err(|_| anyhow::anyhow!("pad mutex poisoned"))?;
+        let mut pad = self
+            .pad
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pad mutex poisoned"))?;
         pad.press_button(button, duration_ms)
     }
 }

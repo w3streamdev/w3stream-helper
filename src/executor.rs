@@ -26,7 +26,11 @@ pub fn play(action: &Action, forwarder: Option<&ForwarderHandle>) -> Result<()> 
                 action.action_id
             )
         })?;
-        let total: u64 = action.input_sequence.iter().map(InputStep::duration_ms).sum();
+        let total: u64 = action
+            .input_sequence
+            .iter()
+            .map(InputStep::duration_ms)
+            .sum();
         // Safety-net suspend: even if the action author forgot the
         // explicit SuspendForwarder step, the forwarder won't clobber
         // the emote button presses for the full action window.
@@ -48,16 +52,20 @@ pub fn play(action: &Action, forwarder: Option<&ForwarderHandle>) -> Result<()> 
                 // No sleep here: the suspend is non-blocking. The next
                 // step's own delay/duration drives the wall clock.
             }
-            InputStep::GamepadButtonTap { button, duration_ms } => {
-                let fw = forwarder.ok_or_else(|| {
-                    anyhow::anyhow!("GamepadButtonTap requires forwarder")
-                })?;
+            InputStep::GamepadButtonTap {
+                button,
+                duration_ms,
+            } => {
+                let fw = forwarder
+                    .ok_or_else(|| anyhow::anyhow!("GamepadButtonTap requires forwarder"))?;
                 fw.press_button(button.bit(), *duration_ms)?;
             }
-            InputStep::GamepadDpad { direction, duration_ms } => {
-                let fw = forwarder.ok_or_else(|| {
-                    anyhow::anyhow!("GamepadDpad requires forwarder")
-                })?;
+            InputStep::GamepadDpad {
+                direction,
+                duration_ms,
+            } => {
+                let fw =
+                    forwarder.ok_or_else(|| anyhow::anyhow!("GamepadDpad requires forwarder"))?;
                 let mut report = XUSBReport::neutral();
                 report.buttons = direction.bits();
                 fw.set_virtual(report)?;
