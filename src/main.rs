@@ -3,6 +3,7 @@ mod actions;
 mod executor;
 mod forwarder;
 mod gamepad;
+mod hidhide;
 mod input;
 mod state;
 
@@ -124,25 +125,33 @@ fn main() -> Result<()> {
 }
 
 fn init_gamepad() -> (Option<Forwarder>, GamepadHealth) {
+    let hidhide_status = hidhide::probe().summary().to_string();
     match VirtualPad::new() {
         Ok(pad) => {
-            info!("VirtualPad initialised; starting forwarder");
+            info!(
+                "VirtualPad initialised; starting forwarder (hidhide: {})",
+                hidhide_status
+            );
             let fw = Forwarder::start(pad);
             (
                 Some(fw),
                 GamepadHealth {
                     available: true,
                     vigem_status: "connected".into(),
-                    // HidHide CLI integration lands in commit G; until then
-                    // we mark it as not-checked so the extension can decide
-                    // how loud to be about it.
-                    hidhide_status: "not_checked".into(),
+                    hidhide_status,
                 },
             )
         }
         Err(e) => {
             warn!("VirtualPad unavailable, keystroke-only mode: {e}");
-            (None, GamepadHealth::unavailable(format!("{e}")))
+            (
+                None,
+                GamepadHealth {
+                    available: false,
+                    vigem_status: format!("{e}"),
+                    hidhide_status,
+                },
+            )
         }
     }
 }
