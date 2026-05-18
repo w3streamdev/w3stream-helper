@@ -1,5 +1,12 @@
-# Smoke test for the gamepad path in w3stream-helper.
-# Invoked by scripts/poke-gamepad.bat.
+# Smoke test for the legacy keystroke path in w3stream-helper.
+# Invoked by scripts/poke-helper.bat.
+#
+# -NoTrigger: run the Native Messaging round-trip but skip firing
+#             test_type_hi (the keystroke-typing step). Use this in
+#             CI/headless contexts where SendInput would land in
+#             whatever happens to be focused.
+
+param([switch]$NoTrigger)
 
 $ErrorActionPreference = 'Stop'
 
@@ -60,52 +67,53 @@ function Recv-Msg() {
 # ---- 1. Read the hello frame ----
 $hello = Recv-Msg
 Write-Host "[+] hello: version=$($hello.version) gamepad.available=$($hello.gamepad.available)"
-Write-Host "       vigem_status=$($hello.gamepad.vigem_status)"
-Write-Host "       hidhide_status=$($hello.gamepad.hidhide_status)"
-if (-not $hello.gamepad.available) {
-    Write-Host "[!] gamepad.available=false; aborting. Check that ViGEmBus is installed and you rebooted after install."
-    $in.Close()
-    $proc.WaitForExit(2000) | Out-Null
-    exit 3
-}
 
 # ---- 2. Health check ----
 Send-Msg @{ requestId = 'health-1'; command = 'health' }
 $resp = Recv-Msg
 Write-Host "[+] health: $(($resp.result | ConvertTo-Json -Compress -Depth 5))"
 
-# ---- 3. Enable + fire fortnite_emote_1 ----
+# ---- 3. Actions list ----
+Send-Msg @{ requestId = 'list-1'; command = 'actions.list' }
+$resp = Recv-Msg
+Write-Host "[+] actions: $(($resp.result.actions | ForEach-Object { $_.action_id }) -join ', ')"
+
+# ---- 4. Enable + fire test_type_hi ----
 Send-Msg @{ requestId = 'en-1'; command = 'enabled'; params = @{ enabled = $true } }
 $resp = Recv-Msg
 Write-Host "[+] enabled: $(($resp.result | ConvertTo-Json -Compress -Depth 3))"
 
-Write-Host ""
-Write-Host "[+] Firing fortnite_emote_1. During the suspend window (~3s)"
-Write-Host "    push the physical stick — gamepad-tester should stay neutral."
-Write-Host ""
+if ($NoTrigger) {
+    Write-Host "[+] -NoTrigger: skipping test_type_hi keystroke step."
+} else {
+    Write-Host ""
+    Write-Host "[+] In 3 seconds we will fire test_type_hi (sends 'HI' via SendInput)."
+    Write-Host "    Focus a Notepad/text window NOW if you want to see the typing."
+    for ($i = 3; $i -ge 1; $i--) {
+        Write-Host "    $i..."
+        Start-Sleep -Seconds 1
+    }
 
-Send-Msg @{
-    requestId = 'trig-1'
-    command = 'trigger'
-    params = @{
-        action_id = 'fortnite_emote_1'
-        request_id = [guid]::NewGuid().ToString()
+    Send-Msg @{
+        requestId = 'trig-1'
+        command = 'trigger'
+        params = @{
+            action_id = 'test_type_hi'
+            request_id = [guid]::NewGuid().ToString()
+        }
+    }
+    $resp = Recv-Msg
+    Write-Host "[+] trigger response: $(($resp | ConvertTo-Json -Compress -Depth 5))"
+
+    if ($resp.error) {
+        Write-Host "[!] trigger failed: $($resp.error)"
     }
 }
-$resp = Recv-Msg
-Write-Host "[+] trigger response: $(($resp | ConvertTo-Json -Compress -Depth 5))"
 
-if ($resp.error) {
-    Write-Host "[!] trigger failed: $($resp.error)"
-    if ($resp.error -match 'disabled in library') {
-        Write-Host "    -> Flip fortnite_emote_1 to enabled=true in"
-        Write-Host "       $env:LOCALAPPDATA\w3stream\actions.json and rerun."
-    }
-}
-
-# ---- 4. Panic to disable, then exit ----
+# ---- 5. Panic + exit ----
 Send-Msg @{ requestId = 'panic-1'; command = 'panic' }
-Recv-Msg | Out-Null
+$resp = Recv-Msg
+Write-Host "[+] panic: $(($resp.result | ConvertTo-Json -Compress -Depth 3))"
 
 $in.Close()
 $proc.WaitForExit(3000) | Out-Null
