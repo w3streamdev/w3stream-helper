@@ -1,5 +1,6 @@
 mod protocol;
 mod actions;
+mod forwarder;
 mod gamepad;
 mod input;
 mod state;
