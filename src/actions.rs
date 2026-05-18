@@ -3,6 +3,7 @@
 //! action definitions, so we keep this struct shape stable on the wire.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -140,6 +141,11 @@ pub struct Action {
     pub enabled: bool,
     #[serde(default)]
     pub cooldown_ms: u64,
+    /// Optional post-action input suppression window. Fortnite emotes use
+    /// this to ignore movement input for a short, auditable period after
+    /// the emote button sequence has already been sent.
+    #[serde(default)]
+    pub input_suppression_ms: u64,
     pub input_sequence: Vec<InputStep>,
 }
 
@@ -163,6 +169,7 @@ impl ActionLibrary {
                     label: "Test Type HI".into(),
                     enabled: true,
                     cooldown_ms: 5000,
+                    input_suppression_ms: 0,
                     input_sequence: vec![
                         InputStep::KeyTap {
                             key: "H".into(),
@@ -177,8 +184,9 @@ impl ActionLibrary {
                 Action {
                     action_id: "fortnite_emote_1".into(),
                     label: "Fortnite Emote 1".into(),
-                    enabled: false,
+                    enabled: true,
                     cooldown_ms: 60_000,
+                    input_suppression_ms: 5000,
                     // Controller-mode emote: open wheel with D-pad Down,
                     // wait for the radial to render, then pick slot 1 (A).
                     // SuspendForwarder is explicit here so authors can see
@@ -204,8 +212,15 @@ impl ActionLibrary {
     pub fn load_or_default() -> Self {
         let path = Self::config_path();
         if let Ok(bytes) = std::fs::read(&path) {
-            if let Ok(lib) = serde_json::from_slice::<ActionLibrary>(&bytes) {
-                return lib;
+            if let Ok(raw) = serde_json::from_slice::<Value>(&bytes) {
+                if let Ok(mut lib) = serde_json::from_value::<ActionLibrary>(raw.clone()) {
+                    if Self::migrate_legacy_defaults(&mut lib, &raw) {
+                        if let Ok(bytes) = serde_json::to_vec_pretty(&lib) {
+                            let _ = std::fs::write(&path, bytes);
+                        }
+                    }
+                    return lib;
+                }
             }
         }
         let lib = Self::defaults();
@@ -216,6 +231,41 @@ impl ActionLibrary {
             let _ = std::fs::write(&path, bytes);
         }
         lib
+    }
+
+    fn migrate_legacy_defaults(lib: &mut ActionLibrary, raw: &Value) -> bool {
+        let mut changed = false;
+        let raw_actions = raw
+            .get("actions")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+
+        for action in &mut lib.actions {
+            if action.action_id != "fortnite_emote_1" {
+                continue;
+            }
+
+            let raw_action = raw_actions.iter().find(|candidate| {
+                candidate.get("action_id").and_then(Value::as_str) == Some("fortnite_emote_1")
+            });
+            let missing_suppression = raw_action
+                .and_then(Value::as_object)
+                .map(|object| !object.contains_key("input_suppression_ms"))
+                .unwrap_or(true);
+
+            if missing_suppression && action.input_suppression_ms == 0 {
+                action.input_suppression_ms = 5000;
+                changed = true;
+            }
+
+            if missing_suppression && !action.enabled {
+                action.enabled = true;
+                changed = true;
+            }
+        }
+
+        changed
     }
 
     pub fn config_path() -> PathBuf {
@@ -230,5 +280,58 @@ impl ActionLibrary {
 
     pub fn find(&self, action_id: &str) -> Option<&Action> {
         self.actions.iter().find(|a| a.action_id == action_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_fortnite_emote_has_safe_suppression_window() {
+        let library = ActionLibrary::defaults();
+        let action = library.find("fortnite_emote_1").unwrap();
+
+        assert!(action.enabled);
+        assert_eq!(action.input_suppression_ms, 5000);
+        assert!(action.input_sequence.iter().any(InputStep::is_gamepad));
+    }
+
+    #[test]
+    fn missing_suppression_field_defaults_to_zero_for_legacy_configs() {
+        let action: Action = serde_json::from_value(serde_json::json!({
+            "action_id": "legacy",
+            "label": "Legacy",
+            "enabled": true,
+            "cooldown_ms": 0,
+            "input_sequence": [{"type": "delay", "duration_ms": 1}]
+        }))
+        .unwrap();
+
+        assert_eq!(action.input_suppression_ms, 0);
+    }
+
+    #[test]
+    fn migrates_old_seeded_fortnite_emote() {
+        let raw = serde_json::json!({
+            "actions": [{
+                "action_id": "fortnite_emote_1",
+                "label": "Fortnite Emote 1",
+                "enabled": false,
+                "cooldown_ms": 60000,
+                "input_sequence": [
+                    {"type": "suspend_forwarder", "duration_ms": 3000},
+                    {"type": "gamepad_dpad", "direction": "down", "duration_ms": 200},
+                    {"type": "delay", "duration_ms": 150},
+                    {"type": "gamepad_button_tap", "button": "a", "duration_ms": 80}
+                ]
+            }]
+        });
+        let mut library: ActionLibrary = serde_json::from_value(raw.clone()).unwrap();
+
+        assert!(ActionLibrary::migrate_legacy_defaults(&mut library, &raw));
+        let action = library.find("fortnite_emote_1").unwrap();
+        assert!(action.enabled);
+        assert_eq!(action.input_suppression_ms, 5000);
     }
 }

@@ -10,6 +10,7 @@ use crate::actions::{Action, InputStep};
 use crate::forwarder::ForwarderHandle;
 use crate::gamepad::XUSBReport;
 use crate::input;
+use crate::suppression;
 
 /// Buffer added to the auto-suspend window so a slow Delay step at the
 /// end of an action doesn't get clipped by forwarding resuming early.
@@ -36,6 +37,8 @@ pub fn play(action: &Action, forwarder: Option<&ForwarderHandle>) -> Result<()> 
         // the emote button presses for the full action window.
         fw.suspend(total.saturating_add(SUSPEND_BUFFER_MS));
     }
+
+    log::info!("action {} emote trigger sequence started", action.action_id);
 
     for step in &action.input_sequence {
         match step {
@@ -74,6 +77,18 @@ pub fn play(action: &Action, forwarder: Option<&ForwarderHandle>) -> Result<()> 
             }
         }
     }
+    if action.input_suppression_ms > 0 {
+        log::info!(
+            "action {} emote trigger sequence completed; starting {} ms input suppression",
+            action.action_id,
+            action.input_suppression_ms
+        );
+        if let Some(fw) = forwarder {
+            fw.suspend(action.input_suppression_ms);
+        }
+        suppression::suppress_for(action.input_suppression_ms);
+    }
+
     Ok(())
 }
 
@@ -86,6 +101,7 @@ fn play_keyboard_step(step: &InputStep) -> Result<()> {
         label: String::new(),
         enabled: true,
         cooldown_ms: 0,
+        input_suppression_ms: 0,
         input_sequence: vec![step.clone()],
     };
     input::play(&action)
@@ -102,6 +118,7 @@ mod tests {
             label: "kb".into(),
             enabled: true,
             cooldown_ms: 0,
+            input_suppression_ms: 0,
             input_sequence: vec![InputStep::Delay { duration_ms: 1 }],
         }
     }
@@ -112,6 +129,7 @@ mod tests {
             label: "gp".into(),
             enabled: true,
             cooldown_ms: 0,
+            input_suppression_ms: 0,
             input_sequence: vec![
                 InputStep::SuspendForwarder { duration_ms: 100 },
                 InputStep::GamepadDpad {
