@@ -31,14 +31,6 @@ struct GamepadHealth {
 }
 
 impl GamepadHealth {
-    fn unavailable(reason: impl Into<String>) -> Self {
-        Self {
-            available: false,
-            vigem_status: reason.into(),
-            hidhide_status: "not_checked".into(),
-        }
-    }
-
     fn to_json(&self) -> Value {
         json!({
             "available": self.available,
