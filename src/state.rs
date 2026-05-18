@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::actions::ActionLibrary;
-use crate::input;
+use crate::executor;
+use crate::forwarder::ForwarderHandle;
 
 const IDEMPOTENCY_TTL: Duration = Duration::from_secs(300);
 
@@ -18,6 +19,7 @@ pub struct AppState {
     panic_mode: bool,
     cooldowns: HashMap<String, Instant>,
     idempotency: HashMap<String, (Instant, Value)>,
+    forwarder: Option<ForwarderHandle>,
 }
 
 impl AppState {
@@ -28,7 +30,12 @@ impl AppState {
             panic_mode: false,
             cooldowns: HashMap::new(),
             idempotency: HashMap::new(),
+            forwarder: None,
         }
+    }
+
+    pub fn set_forwarder(&mut self, fw: Option<ForwarderHandle>) {
+        self.forwarder = fw;
     }
 
     pub fn enabled(&self) -> bool {
@@ -117,8 +124,9 @@ impl AppState {
             }
         }
 
-        // Execute. SendInput on Windows; no-op on other targets.
-        let executed = match input::play(&action) {
+        // Execute. SendInput on Windows for keystrokes, ViGEm for
+        // gamepad steps; no-op on other targets.
+        let executed = match executor::play(&action, self.forwarder.as_ref()) {
             Ok(_) => true,
             Err(e) => {
                 warn!("action {action_id} failed: {e}");
