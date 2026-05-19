@@ -72,6 +72,7 @@ impl AppState {
                 "label": a.label,
                 "enabled": a.enabled,
                 "cooldown_ms": a.cooldown_ms,
+                "input_suppression_ms": a.input_suppression_ms,
             }))
             .collect::<Vec<_>>())
     }
@@ -83,6 +84,8 @@ impl AppState {
         if !self.enabled {
             return Err("helper disabled".into());
         }
+
+        info!("trigger command received");
 
         let action_id = params
             .get("action_id")
@@ -101,6 +104,8 @@ impl AppState {
         if let Some((_, cached)) = self.idempotency.get(&req_id) {
             return Ok(cached.clone());
         }
+
+        info!("trigger request accepted for action {action_id}");
 
         let action = self
             .library
@@ -142,6 +147,7 @@ impl AppState {
             }
         };
 
+        info!("action {action_id} executed successfully");
         self.cooldowns.insert(action_id.to_string(), Instant::now());
 
         let result = json!({

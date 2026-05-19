@@ -1,6 +1,6 @@
 {
   "name": "io.connect3.w3stream.helper",
-  "description": "w3stream Agent native helper (viewer input → keystrokes)",
+  "description": "w3stream Agent native helper (viewer input → keystrokes/gamepad)",
   "path": "{{HELPER_PATH}}",
   "type": "stdio",
   "allowed_origins": [

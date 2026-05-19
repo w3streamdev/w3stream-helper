@@ -6,6 +6,7 @@ mod hidhide;
 mod input;
 mod protocol;
 mod state;
+mod suppression;
 
 use anyhow::Result;
 use log::{error, info, warn};
