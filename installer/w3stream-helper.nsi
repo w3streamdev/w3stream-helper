@@ -107,22 +107,87 @@ Section "Install"
   IfFileExists "$PLUGINSDIR\ViGEmBus.exe" 0 driver_skip
   IfFileExists "$PLUGINSDIR\HidHide.exe"  0 driver_skip
 
+  ; Make sure the install dir exists BEFORE the elevated bat tries to write
+  ; a log file into it. SetOutPath creates it but does not guarantee write
+  ; access from the elevated cmd unless the path is the streamer's own
+  ; LOCALAPPDATA (it is). We pass the log path explicitly to the bat because
+  ; the elevated cmd inherits the *admin* user's %LOCALAPPDATA%, not the
+  ; streamer's.
+  CreateDirectory "$INSTDIR"
+
+  ; drivers-bootstrap.bat — robust install + whitelist verify with logging.
+  ;
+  ; This bat runs ELEVATED (under runas). All it can do silently is:
+  ;   - install ViGEmBus + HidHide bundles
+  ;   - whitelist the helper.exe with HidHideCLI --app-reg
+  ;   - cloak HID devices machine-wide
+  ;
+  ; Failure modes we have hit:
+  ;   - HidHideCLI not yet on disk when /passive supposedly returned
+  ;   - --app-reg silently no-op'd (returned 0 but list still empty)
+  ;   - User dismissed UAC; nothing ran
+  ;
+  ; Mitigations baked in below:
+  ;   1. Write every step to $INSTDIR\install-drivers.log so failures are
+  ;      diagnosable post-install (helper.log already exists in the same dir).
+  ;   2. Poll for HidHideCLI.exe up to 60s after the bundle installer exits.
+  ;   3. Run --app-reg, then --app-list, grep for helper.exe; retry up to 3x.
+  ;   4. Always run --cloak-on so other apps (reWASD) keep working.
   FileOpen $4 "$PLUGINSDIR\drivers-bootstrap.bat" w
   FileWrite $4 '@echo off$\r$\n'
-  FileWrite $4 'echo Installing ViGEmBus (Nefarius virtual gamepad driver)...$\r$\n'
-  FileWrite $4 '"%~dp0ViGEmBus.exe" /passive /norestart$\r$\n'
-  FileWrite $4 'echo Installing HidHide...$\r$\n'
-  FileWrite $4 '"%~dp0HidHide.exe" /passive /norestart$\r$\n'
-  FileWrite $4 'set CLI=%ProgramFiles%\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe$\r$\n'
-  FileWrite $4 'if exist "%CLI%" ($\r$\n'
-  FileWrite $4 '  "%CLI%" --app-reg "%~1"$\r$\n'
-  FileWrite $4 '  "%CLI%" --cloak-on$\r$\n'
-  FileWrite $4 ')$\r$\n'
+  FileWrite $4 'setlocal enableextensions enabledelayedexpansion$\r$\n'
+  FileWrite $4 'set "HELPER=%~1"$\r$\n'
+  FileWrite $4 'set "LOG=%~2"$\r$\n'
+  FileWrite $4 'set "CLI=%ProgramFiles%\Nefarius Software Solutions\HidHide\x64\HidHideCLI.exe"$\r$\n'
+  FileWrite $4 'for %%I in ("%HELPER%") do set "HELPER_NAME=%%~nxI"$\r$\n'
+  FileWrite $4 '> "%LOG%" echo [%date% %time%] drivers-bootstrap starting$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo HELPER=%HELPER%$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo HELPER_NAME=%HELPER_NAME%$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo CLI=%CLI%$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo Installing ViGEmBus...$\r$\n'
+  FileWrite $4 '"%~dp0ViGEmBus.exe" /passive /norestart >> "%LOG%" 2>&1$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo ViGEmBus exit=!errorlevel!$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo Installing HidHide...$\r$\n'
+  FileWrite $4 '"%~dp0HidHide.exe" /passive /norestart >> "%LOG%" 2>&1$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo HidHide exit=!errorlevel!$\r$\n'
+  FileWrite $4 'set /a TRIES=0$\r$\n'
+  FileWrite $4 ':wait_cli_loop$\r$\n'
+  FileWrite $4 'if exist "%CLI%" goto have_cli$\r$\n'
+  FileWrite $4 'set /a TRIES+=1$\r$\n'
+  FileWrite $4 'if !TRIES! gtr 60 goto no_cli$\r$\n'
+  FileWrite $4 'ping -n 2 127.0.0.1 >nul 2>&1$\r$\n'
+  FileWrite $4 'goto wait_cli_loop$\r$\n'
+  FileWrite $4 ':no_cli$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo HidHideCLI not found after 60s; skipping whitelist + cloak.$\r$\n'
+  FileWrite $4 'exit /b 0$\r$\n'
+  FileWrite $4 ':have_cli$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo Found HidHideCLI after !TRIES! poll(s).$\r$\n'
+  FileWrite $4 'set /a ATTEMPT=0$\r$\n'
+  FileWrite $4 ':reg_loop$\r$\n'
+  FileWrite $4 'set /a ATTEMPT+=1$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo --- attempt !ATTEMPT! ---$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo running: "%CLI%" --app-reg "%HELPER%"$\r$\n'
+  FileWrite $4 '"%CLI%" --app-reg "%HELPER%" >> "%LOG%" 2>&1$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo --app-reg exit=!errorlevel!$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo running: "%CLI%" --app-list$\r$\n'
+  FileWrite $4 '"%CLI%" --app-list >> "%LOG%" 2>&1$\r$\n'
+  FileWrite $4 '"%CLI%" --app-list 2>nul | findstr /i /c:"%HELPER_NAME%" >nul$\r$\n'
+  FileWrite $4 'if !errorlevel! equ 0 goto reg_ok$\r$\n'
+  FileWrite $4 'if !ATTEMPT! lss 3 (ping -n 3 127.0.0.1 >nul 2>&1 & goto reg_loop)$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo WARNING: --app-reg verification FAILED after !ATTEMPT! attempts.$\r$\n'
+  FileWrite $4 'goto cloak$\r$\n'
+  FileWrite $4 ':reg_ok$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo --app-reg verified: %HELPER_NAME% on HidHide allow-list.$\r$\n'
+  FileWrite $4 ':cloak$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo running: "%CLI%" --cloak-on$\r$\n'
+  FileWrite $4 '"%CLI%" --cloak-on >> "%LOG%" 2>&1$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo --cloak-on exit=!errorlevel!$\r$\n'
+  FileWrite $4 '>> "%LOG%" echo done$\r$\n'
   FileWrite $4 'exit /b 0$\r$\n'
   FileClose $4
 
   DetailPrint "Installing ViGEmBus + HidHide drivers (single UAC consent expected)..."
-  ExecShellWait "runas" "$SYSDIR\cmd.exe" '/c "$PLUGINSDIR\drivers-bootstrap.bat" "$INSTDIR\helper.exe"' SW_SHOWNORMAL
+  ExecShellWait "runas" "$SYSDIR\cmd.exe" '/c "$PLUGINSDIR\drivers-bootstrap.bat" "$INSTDIR\helper.exe" "$INSTDIR\install-drivers.log"' SW_SHOWNORMAL
 
   ; Driver installers (Burn .exe bundles) set the system reboot-pending
   ; flag internally when needed; we propagate that as a recommendation

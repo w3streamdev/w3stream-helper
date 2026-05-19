@@ -52,8 +52,8 @@ impl HidHideStatus {
         ) {
             (Some(false), _, _) => "helper_not_whitelisted",
             (_, Some(true), _) => "fortnite_still_whitelisted",
-            (_, _, Some(false)) => "cloak_off",
             (Some(true), Some(false), Some(true)) => "configured",
+            (_, _, Some(false)) => "cloak_off",
             _ => "unknown",
         }
     }
@@ -98,13 +98,19 @@ pub fn probe() -> HidHideStatus {
         }
     };
 
-    let helper_on_allowlist = if denied {
+    // If --app-list returned empty (CLI may silently no-op without admin on
+    // some HidHide builds), we cannot honestly say the helper *isn't*
+    // whitelisted -- only that we cannot prove it is. Treat empty as
+    // unknown so the health line doesn't slander the install.
+    let list_empty = app_list.trim().is_empty();
+
+    let helper_on_allowlist = if denied || list_empty {
         None
     } else {
         helper_exe.map(|h| app_list.to_lowercase().contains(&h))
     };
 
-    let fortnite_on_allowlist = if denied {
+    let fortnite_on_allowlist = if denied || list_empty {
         None
     } else {
         Some(
