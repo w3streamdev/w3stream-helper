@@ -37,27 +37,41 @@ mod imp {
     use super::GUARD_TASK;
     use log::{info, warn};
     use std::os::windows::process::CommandExt;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
     // CREATE_NO_WINDOW — never flash a console when the helper shells out.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     pub fn disable_gamepad(duration_ms: u64) {
-        // schtasks /run returns immediately; the task itself runs the
-        // elevated script asynchronously.
+        // Run schtasks with explicit null stdin and captured stdout/stderr.
+        //
+        // The helper's own stdio handles ARE the Chrome native-messaging
+        // pipes. A child that inherits them runs in a broken context and
+        // would also corrupt the protocol stream by writing into it. We
+        // isolate schtasks completely and capture its output so a failure
+        // is diagnosable from helper.log instead of being a bare exit code.
         match Command::new("schtasks")
             .args(["/run", "/tn", GUARD_TASK])
             .creation_flags(CREATE_NO_WINDOW)
-            .status()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
         {
-            Ok(status) if status.success() => {
+            Ok(o) if o.status.success() => {
                 info!("input-guard: triggered gamepad lockout (~{duration_ms} ms window)");
             }
-            Ok(status) => {
+            Ok(o) => {
+                let detail = format!(
+                    "{} {}",
+                    String::from_utf8_lossy(&o.stdout).trim(),
+                    String::from_utf8_lossy(&o.stderr).trim()
+                );
                 warn!(
-                    "input-guard: schtasks /run exited {} — gamepad not locked out \
-                     (keyboard/mouse lockout still active)",
-                    status.code().unwrap_or(-1)
+                    "input-guard: schtasks /run failed (exit {}): {} — gamepad not \
+                     locked out (keyboard/mouse lockout still active)",
+                    o.status.code().unwrap_or(-1),
+                    detail.trim()
                 );
             }
             Err(e) => warn!(
@@ -71,8 +85,9 @@ mod imp {
         Command::new("schtasks")
             .args(["/query", "/tn", GUARD_TASK])
             .creation_flags(CREATE_NO_WINDOW)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
