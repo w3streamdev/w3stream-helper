@@ -85,6 +85,37 @@ install drivers, services, persistence, telemetry, or stealth behavior. Multiple
 rapid emote triggers only extend the in-memory deadline, and process exit drops
 all hooks/devices.
 
+## Movement-gated emote retry
+
+When `emoteRetry.enabled` is `true` (the default), an emote request is no
+longer one-shot. The helper fires the emote immediately and then keeps
+re-firing it every `retryIntervalMs` for as long as the physical Xbox
+controller still shows meaningful input. Controller state is sampled with the
+read-only `XInputGetState` API — no driver, no device changes, no input
+suppression. Once the streamer has been continuously idle for `idleRequiredMs`
+the emote is considered landed and the retry loop stops; `maxDurationMs` caps
+the loop so it can never run forever. A new emote request replaces any
+in-flight one. Set `emoteRetry.enabled` to `false` to keep the legacy
+one-shot + input-suppression behavior.
+
+`%LOCALAPPDATA%\w3stream\actions.json` carries the settings under `emoteRetry`:
+
+```json
+{
+  "emoteRetry": {
+    "enabled": true,
+    "idleRequiredMs": 5000,
+    "retryIntervalMs": 750,
+    "stickDeadzone": 0.15,
+    "triggerDeadzone": 0.10,
+    "maxDurationMs": 60000
+  }
+}
+```
+
+Tiny analog drift inside `stickDeadzone` / `triggerDeadzone` is ignored so it
+can't keep the loop alive forever.
+
 ## Action config
 
 `%LOCALAPPDATA%\w3stream\actions.json` — same shape as `emote-me/config.json`.

@@ -1,4 +1,5 @@
 mod actions;
+mod emote_retry;
 mod executor;
 mod guard_client;
 mod input;

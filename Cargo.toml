@@ -27,6 +27,9 @@ features = [
     # input-lockout window.
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
+    # XInputGetState — read-only physical gamepad state for the
+    # movement-gated emote retry loop. Built-in Windows API, no driver.
+    "Win32_UI_Input_XboxController",
 ]
 
 [profile.release]

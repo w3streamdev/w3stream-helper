@@ -122,8 +122,17 @@ impl AppState {
             }
         }
 
-        // Execute: SendInput keystrokes + open the input-lockout window.
-        let executed = match executor::play(&action) {
+        // Execute. With movement-gated retry enabled the emote fires once
+        // immediately and a background loop keeps re-firing it until the
+        // streamer goes idle — no input suppression. Otherwise the legacy
+        // one-shot path runs (keystrokes + input-lockout window).
+        let retry_config = self.library.emote_retry.clone();
+        let play_result = if retry_config.enabled {
+            crate::emote_retry::on_emote_requested(action, retry_config)
+        } else {
+            executor::play(&action)
+        };
+        let executed = match play_result {
             Ok(_) => true,
             Err(e) => {
                 warn!("action {action_id} failed: {e}");
