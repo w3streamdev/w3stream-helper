@@ -32,15 +32,28 @@ try {
                                               -ExecutionTimeLimit (New-TimeSpan -Minutes 1) `
                                               -MultipleInstances IgnoreNew
 
-    # No -Trigger: the task only ever runs on demand (schtasks /run). The
-    # default task security descriptor lets Authenticated Users run it, so
-    # the standard-user helper can trigger it without elevation.
+    # No -Trigger: the task only ever runs on demand (schtasks /run).
     Register-ScheduledTask -TaskName 'w3stream-input-guard' `
                            -Action $action `
                            -Principal $principal `
                            -Settings $settings `
                            -Description 'w3stream input-guard: briefly disables the game controller while a chat-triggered emote plays.' `
                            -Force | Out-Null
+
+    # Grant the run permission. Register-ScheduledTask creates a task that
+    # only administrators can trigger — the user-level helper calls
+    # `schtasks /run` and would hit "Access is denied". Set a DACL that keeps
+    # Admins + SYSTEM full and adds Authenticated Users read+execute, so the
+    # streamer's normal account can fire the task with no elevation.
+    try {
+        $svc = New-Object -ComObject 'Schedule.Service'
+        $svc.Connect()
+        $svc.GetFolder('\').GetTask('w3stream-input-guard').SetSecurityDescriptor(
+            'D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;FRFX;;;AU)', 0)
+        Log "task ACL set: Authenticated Users may run the task"
+    } catch {
+        Log "WARNING: could not set task ACL ($_) — helper may hit Access denied"
+    }
 
     Log "registered ok"
     exit 0
