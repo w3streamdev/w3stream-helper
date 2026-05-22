@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 
+use crate::emote_retry::EmoteRetryConfig;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputStep {
@@ -52,6 +54,10 @@ fn default_true() -> bool {
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct ActionLibrary {
     pub actions: Vec<Action>,
+    /// Movement-gated emote retry settings. Defaults are filled in for
+    /// configs written before this section existed.
+    #[serde(rename = "emoteRetry", default)]
+    pub emote_retry: EmoteRetryConfig,
 }
 
 impl ActionLibrary {
@@ -101,6 +107,7 @@ impl ActionLibrary {
                     ],
                 },
             ],
+            emote_retry: EmoteRetryConfig::default(),
         }
     }
 
