@@ -5,11 +5,13 @@
 //! succeeds on the wire but nothing plays in-game.
 //!
 //! Instead of giving up after one attempt, an emote request here starts a
-//! background retry loop: it fires the emote immediately and then keeps
-//! re-firing it every `retry_interval_ms` while the physical controller still
-//! shows meaningful input. Once the streamer has been idle for a continuous
-//! `idle_required_ms` window the emote is considered landed and the loop
-//! stops. A `max_duration_ms` cap guarantees the loop can never run forever.
+//! background retry loop: it fires the emote immediately and then assumes the
+//! controller is idle, counting down `idle_required_ms`. Any non-neutral
+//! controller input resets that countdown and re-fires the emote (throttled
+//! by `retry_interval_ms`); an idle controller is left alone so the emote can
+//! land. Once the streamer has been idle for a continuous `idle_required_ms`
+//! window the emote is considered landed and the loop stops. A
+//! `max_duration_ms` cap guarantees the loop can never run forever.
 //!
 //! Controller state is read with `XInputGetState` — a read-only, built-in
 //! Windows API. Nothing here installs drivers, suppresses the streamer's
@@ -164,11 +166,23 @@ fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
             .map(|snapshot| is_gamepad_input_active(&snapshot, &config))
             .unwrap_or(false);
 
+        // An idle controller is assumed to mean the emote can land, so the
+        // idle countdown is left to run. Any non-neutral input resets that
+        // countdown AND re-fires the emote; retry_interval_ms throttles the
+        // re-fire so a held stick can't spam the keystroke sequence.
         if input_active {
             last_input_at = now;
-            // Log only the idle→active transition, not every tick.
             if !was_active {
                 info!("[emote-retry] input active; idle timer reset");
+            }
+            if now.duration_since(last_attempt_at).as_millis() as u64
+                >= config.retry_interval_ms
+            {
+                if let Err(e) = input::play(&action) {
+                    log::warn!("[emote-retry] retry emote={emote_id} attempt failed: {e}");
+                }
+                last_attempt_at = now;
+                info!("[emote-retry] retry emote={emote_id}");
             }
         }
         was_active = input_active;
@@ -184,14 +198,6 @@ fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
         if idle_for_ms >= config.idle_required_ms {
             info!("[emote-retry] idle satisfied emote={emote_id} idleForMs={idle_for_ms}");
             return;
-        }
-
-        if now.duration_since(last_attempt_at).as_millis() as u64 >= config.retry_interval_ms {
-            if let Err(e) = input::play(&action) {
-                log::warn!("[emote-retry] retry emote={emote_id} attempt failed: {e}");
-            }
-            last_attempt_at = now;
-            info!("[emote-retry] retry emote={emote_id} idleForMs={idle_for_ms}");
         }
     }
 }
