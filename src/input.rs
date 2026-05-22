@@ -42,25 +42,52 @@ fn release(vk: u16) -> Result<()> {
     send_key(vk, true)
 }
 
+/// Keys Windows flags as "extended" — they need KEYEVENTF_EXTENDEDKEY so the
+/// scan code is interpreted correctly. (Arrow/nav keys, right-hand modifiers.)
+fn is_extended_key(vk: u16) -> bool {
+    matches!(
+        vk,
+        0x21..=0x28        // PgUp PgDn End Home Left Up Right Down
+            | 0x2D | 0x2E  // Insert, Delete
+            | 0xA3 | 0xA5  // Right Ctrl, Right Alt
+            | 0x5B | 0x5C  // Left/Right Win
+    )
+}
+
 #[cfg(windows)]
 fn send_key(vk: u16, key_up: bool) -> Result<()> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-        VIRTUAL_KEY,
+        MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+        KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
     };
 
-    let flags: KEYBD_EVENT_FLAGS = if key_up {
-        KEYEVENTF_KEYUP
-    } else {
-        KEYBD_EVENT_FLAGS(0)
-    };
+    // Anti-cheat games (Fortnite/EAC, BattlEye, …) read the keyboard via Raw
+    // Input / hardware scan codes, NOT the virtual-key message queue. A
+    // virtual-key-only SendInput (wScan = 0) types fine in Notepad but is
+    // invisible to the game. So translate the VK to its hardware scan code
+    // and send THAT with KEYEVENTF_SCANCODE — that path reaches both the
+    // message queue AND raw-input readers.
+    let scan = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16;
+    if scan == 0 {
+        return Err(anyhow!("no scan code for virtual key {vk:#04x}"));
+    }
+
+    let mut flags = KEYEVENTF_SCANCODE;
+    if key_up {
+        flags |= KEYEVENTF_KEYUP;
+    }
+    if is_extended_key(vk) {
+        flags |= KEYEVENTF_EXTENDEDKEY;
+    }
 
     let input = INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: VIRTUAL_KEY(vk),
-                wScan: 0,
+                // With KEYEVENTF_SCANCODE the scan code identifies the key;
+                // wVk is ignored. Leave it 0.
+                wVk: VIRTUAL_KEY(0),
+                wScan: scan,
                 dwFlags: flags,
                 time: 0,
                 dwExtraInfo: 0,
