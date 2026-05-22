@@ -69,9 +69,21 @@ VIAddVersionKey  "CompanyName"     "Connect3"
 Section "Install"
   SetOutPath "$INSTDIR"
 
-  ; Helper binary. Built by CI before invoking makensis.
-  File "..\target\x86_64-pc-windows-msvc\release\w3stream-helper.exe"
-  Rename "$INSTDIR\w3stream-helper.exe" "$INSTDIR\helper.exe"
+  ; Stop any running helper so its .exe isn't locked. Chrome relaunches the
+  ; helper automatically on the next native-messaging connect.
+  nsExec::Exec 'taskkill /F /IM helper.exe'
+  Pop $0
+
+  ; Helper binary. Built by CI before invoking makensis. Drop it straight in
+  ; as helper.exe via /oname — this OVERWRITES an existing helper.exe.
+  ;
+  ; The previous File + Rename pattern silently failed on every reinstall:
+  ; NSIS Rename will not replace an existing destination, so the stale
+  ; helper.exe stayed put and the freshly-extracted binary sat unused next
+  ; to it as w3stream-helper.exe. /oname makes the extract authoritative.
+  File "/oname=helper.exe" "..\target\x86_64-pc-windows-msvc\release\w3stream-helper.exe"
+  ; Remove the misnamed leftover from any prior broken install.
+  Delete "$INSTDIR\w3stream-helper.exe"
 
   ; The gamepad-lockout worker. The input-guard Scheduled Task runs this as
   ; SYSTEM whenever an emote fires: it disables the game controller(s) for a
