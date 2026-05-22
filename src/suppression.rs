@@ -75,7 +75,6 @@ fn platform_suppress_until_deadline() {
 #[cfg(windows)]
 fn platform_suppress_until_deadline() {
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
-    use windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY;
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, PeekMessageW, SetWindowsHookExW, TranslateMessage,
         UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED,
@@ -87,22 +86,6 @@ fn platform_suppress_until_deadline() {
         WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
         WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
     };
-
-    const BLOCKED_KEYS: &[u16] = &[
-        b'W' as u16,
-        b'A' as u16,
-        b'S' as u16,
-        b'D' as u16,
-        0x20, // Space
-        0x25, // Left
-        0x26, // Up
-        0x27, // Right
-        0x28, // Down
-        0xA0, // Left shift
-        0xA1, // Right shift
-        0xA2, // Left ctrl
-        0xA3, // Right ctrl
-    ];
 
     struct HookGuard {
         keyboard: Option<HHOOK>,
@@ -128,9 +111,11 @@ fn platform_suppress_until_deadline() {
             let msg = wparam.0 as u32;
             if matches!(msg, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP) {
                 let event = *(lparam.0 as *const KBDLLHOOKSTRUCT);
-                let injected = event.flags.contains(LLKHF_INJECTED);
-                let vk = VIRTUAL_KEY(event.vkCode as u16).0;
-                if !injected && BLOCKED_KEYS.contains(&vk) {
+                // Disable the keyboard outright for the lockout window —
+                // every physical key is swallowed so the streamer cannot
+                // cancel the emote. Our own emote keystrokes go through
+                // SendInput and carry LLKHF_INJECTED, so they still pass.
+                if !event.flags.contains(LLKHF_INJECTED) {
                     return LRESULT(1);
                 }
             }

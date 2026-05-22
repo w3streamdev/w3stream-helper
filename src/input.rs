@@ -27,18 +27,6 @@ pub fn play(action: &Action) -> Result<()> {
             InputStep::Delay { duration_ms } => {
                 sleep(Duration::from_millis(*duration_ms));
             }
-            // Gamepad steps are dispatched by the executor (next commit).
-            // input::play() is kept around for the keystroke-only path
-            // and refuses gamepad steps explicitly so a misconfigured
-            // action surfaces an action-level failure instead of silently
-            // skipping the gamepad part.
-            InputStep::GamepadButtonTap { .. }
-            | InputStep::GamepadDpad { .. }
-            | InputStep::SuspendForwarder { .. } => {
-                return Err(anyhow!(
-                    "gamepad step requires the gamepad executor; use executor::play()"
-                ));
-            }
         }
     }
     Ok(())

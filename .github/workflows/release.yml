@@ -75,53 +75,6 @@ jobs:
           fi
           echo "extension_id=$ID" >> "$GITHUB_OUTPUT"
 
-      # --------------------------------------------------------------
-      # Fetch + verify bundled driver installers.
-      #
-      # URLs and SHA-256 values are PINNED. Bumping a driver version is a
-      # deliberate two-step change (update URL + update SHA below);
-      # CI fails loudly on mismatch so no auto-latest can sneak into a
-      # signed release artifact.
-      #
-      # Sources:
-      #   HidHide  https://github.com/nefarius/HidHide/releases
-      #   ViGEmBus https://github.com/nefarius/ViGEmBus/releases
-      #
-      # To rotate: download the new release manually, run
-      #   certutil -hashfile <file> SHA256
-      # and update both the URL and the corresponding _SHA256 value below.
-      # --------------------------------------------------------------
-      - name: Fetch + verify driver installers
-        id: drivers
-        shell: pwsh
-        env:
-          HIDHIDE_URL:    'https://github.com/nefarius/HidHide/releases/download/v1.5.230.0/HidHide_1.5.230_x64.exe'
-          HIDHIDE_SHA256: 'f4bbbcb82e6258641b887c74bc81c4c5f66e4aa811808dfc304347687b7605f6'
-          VIGEMBUS_URL:    'https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe'
-          VIGEMBUS_SHA256: '89220a7865076b342892f98865f3499fb7c4cfd673159e89d352c360fd014c6a'
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $vendor = Join-Path $PWD 'installer\vendor'
-          New-Item -ItemType Directory -Force -Path $vendor | Out-Null
-
-          function FetchAndVerify($url, $sha, $destName) {
-            $dest = Join-Path $vendor $destName
-            Write-Host "Fetching $url"
-            Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
-            $actual = (Get-FileHash -Algorithm SHA256 $dest).Hash.ToLower()
-            $expected = $sha.ToLower()
-            if ($expected -like 'todo_*') {
-              throw "SHA-256 for $destName is a placeholder ($sha). Download the file, run 'certutil -hashfile $destName SHA256', and update release.yml before tagging a release."
-            }
-            if ($actual -ne $expected) {
-              throw "SHA-256 mismatch for $destName`n  expected: $expected`n  actual:   $actual"
-            }
-            Write-Host "OK $destName ($actual)"
-          }
-
-          FetchAndVerify $env:HIDHIDE_URL  $env:HIDHIDE_SHA256  'HidHide.exe'
-          FetchAndVerify $env:VIGEMBUS_URL $env:VIGEMBUS_SHA256 'ViGEmBus.exe'
-
       - name: Install NSIS
         shell: pwsh
         run: |

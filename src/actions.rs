@@ -23,114 +23,10 @@ pub enum InputStep {
     Delay {
         duration_ms: u64,
     },
-    GamepadButtonTap {
-        button: GamepadButton,
-        #[serde(default = "default_tap_ms")]
-        duration_ms: u64,
-    },
-    GamepadDpad {
-        direction: DpadDir,
-        #[serde(default = "default_tap_ms")]
-        duration_ms: u64,
-    },
-    /// Explicit forwarder suspend. The executor also auto-suspends for
-    /// the duration of any action that contains gamepad steps, but this
-    /// lets authors pad the window (e.g. to absorb the streamer's
-    /// reaction time after the emote wheel opens).
-    SuspendForwarder {
-        duration_ms: u64,
-    },
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum GamepadButton {
-    A,
-    B,
-    X,
-    Y,
-    LB,
-    RB,
-    LStick,
-    RStick,
-    Back,
-    Start,
-    Guide,
-}
-
-impl GamepadButton {
-    pub fn bit(self) -> u16 {
-        use crate::gamepad::buttons::*;
-        match self {
-            Self::A => A,
-            Self::B => B,
-            Self::X => X,
-            Self::Y => Y,
-            Self::LB => LB,
-            Self::RB => RB,
-            Self::LStick => LTHUMB,
-            Self::RStick => RTHUMB,
-            Self::Back => BACK,
-            Self::Start => START,
-            Self::Guide => GUIDE,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum DpadDir {
-    Up,
-    Down,
-    Left,
-    Right,
-    UpLeft,
-    UpRight,
-    DownLeft,
-    DownRight,
-}
-
-impl DpadDir {
-    pub fn bits(self) -> u16 {
-        use crate::gamepad::buttons::*;
-        match self {
-            Self::Up => DPAD_UP,
-            Self::Down => DPAD_DOWN,
-            Self::Left => DPAD_LEFT,
-            Self::Right => DPAD_RIGHT,
-            Self::UpLeft => DPAD_UP | DPAD_LEFT,
-            Self::UpRight => DPAD_UP | DPAD_RIGHT,
-            Self::DownLeft => DPAD_DOWN | DPAD_LEFT,
-            Self::DownRight => DPAD_DOWN | DPAD_RIGHT,
-        }
-    }
 }
 
 fn default_tap_ms() -> u64 {
     80
-}
-
-impl InputStep {
-    /// Conservative upper bound on the wall-clock duration of this step.
-    /// Used by the executor to pre-compute the auto-suspend window for
-    /// actions that contain any gamepad step.
-    pub fn duration_ms(&self) -> u64 {
-        match self {
-            Self::KeyTap { duration_ms, .. } => *duration_ms,
-            Self::KeyDown { .. } | Self::KeyUp { .. } => 0,
-            Self::Delay { duration_ms } => *duration_ms,
-            Self::GamepadButtonTap { duration_ms, .. } => *duration_ms,
-            Self::GamepadDpad { duration_ms, .. } => *duration_ms,
-            Self::SuspendForwarder { duration_ms } => *duration_ms,
-        }
-    }
-
-    pub fn is_gamepad(&self) -> bool {
-        matches!(
-            self,
-            Self::GamepadButtonTap { .. } | Self::GamepadDpad { .. }
-        )
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -141,9 +37,9 @@ pub struct Action {
     pub enabled: bool,
     #[serde(default)]
     pub cooldown_ms: u64,
-    /// Optional post-action input suppression window. Fortnite emotes use
-    /// this to ignore movement input for a short, auditable period after
-    /// the emote button sequence has already been sent.
+    /// Input-lockout window opened the instant this action fires. For
+    /// Fortnite emotes this freezes the streamer's OWN keyboard, mouse, and
+    /// gamepad for the duration so their movement can't cancel the emote.
     #[serde(default)]
     pub input_suppression_ms: u64,
     pub input_sequence: Vec<InputStep>,
@@ -187,20 +83,19 @@ impl ActionLibrary {
                     enabled: true,
                     cooldown_ms: 60_000,
                     input_suppression_ms: 5000,
-                    // Controller-mode emote: open wheel with D-pad Down,
-                    // wait for the radial to render, then pick slot 1 (A).
-                    // SuspendForwarder is explicit here so authors can see
-                    // the gate; the executor also auto-suspends as a
-                    // safety net.
+                    // Keyboard emote: tap B to open the emote wheel, wait
+                    // for the radial to render, then tap 1 to pick slot 1.
+                    // input_suppression_ms freezes the streamer's OWN
+                    // keyboard/mouse/gamepad for 5 s while this plays so
+                    // their movement can't cancel the emote mid-animation.
                     input_sequence: vec![
-                        InputStep::SuspendForwarder { duration_ms: 3000 },
-                        InputStep::GamepadDpad {
-                            direction: DpadDir::Down,
-                            duration_ms: 200,
+                        InputStep::KeyTap {
+                            key: "B".into(),
+                            duration_ms: 80,
                         },
-                        InputStep::Delay { duration_ms: 150 },
-                        InputStep::GamepadButtonTap {
-                            button: GamepadButton::A,
+                        InputStep::Delay { duration_ms: 120 },
+                        InputStep::KeyTap {
+                            key: "1".into(),
                             duration_ms: 80,
                         },
                     ],
@@ -222,6 +117,10 @@ impl ActionLibrary {
                     return lib;
                 }
             }
+            // A config we cannot parse — e.g. a legacy gamepad actions.json
+            // whose step types (gamepad_dpad, suspend_forwarder, …) no longer
+            // exist — falls through to the keyboard defaults written below.
+            // This is the migration: the streamer never edits config by hand.
         }
         let lib = Self::defaults();
         if let Some(parent) = path.parent() {
@@ -233,6 +132,9 @@ impl ActionLibrary {
         lib
     }
 
+    /// Patch older configs that parsed cleanly but predate a field. Currently
+    /// only fills in `input_suppression_ms` for a `fortnite_emote_1` that was
+    /// seeded before that field existed.
     fn migrate_legacy_defaults(lib: &mut ActionLibrary, raw: &Value) -> bool {
         let mut changed = false;
         let raw_actions = raw
@@ -288,13 +190,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_fortnite_emote_has_safe_suppression_window() {
+    fn default_fortnite_emote_is_keyboard_with_suppression() {
         let library = ActionLibrary::defaults();
         let action = library.find("fortnite_emote_1").unwrap();
 
         assert!(action.enabled);
         assert_eq!(action.input_suppression_ms, 5000);
-        assert!(action.input_sequence.iter().any(InputStep::is_gamepad));
+        // The emote fires as keystrokes — every step is keyboard.
+        assert!(action
+            .input_sequence
+            .iter()
+            .all(|s| matches!(s, InputStep::KeyTap { .. } | InputStep::Delay { .. })));
+        assert!(action
+            .input_sequence
+            .iter()
+            .any(|s| matches!(s, InputStep::KeyTap { .. })));
     }
 
     #[test]
@@ -312,7 +222,28 @@ mod tests {
     }
 
     #[test]
-    fn migrates_old_seeded_fortnite_emote() {
+    fn legacy_gamepad_config_fails_to_parse_so_defaults_take_over() {
+        // Old gamepad actions.json: these step types no longer exist, so
+        // deserialization MUST fail. load_or_default() then falls back to
+        // the keyboard defaults — that is the auto-migration.
+        let raw = serde_json::json!({
+            "actions": [{
+                "action_id": "fortnite_emote_1",
+                "label": "Fortnite Emote 1",
+                "enabled": true,
+                "cooldown_ms": 60000,
+                "input_sequence": [
+                    {"type": "suspend_forwarder", "duration_ms": 3000},
+                    {"type": "gamepad_dpad", "direction": "down", "duration_ms": 200},
+                    {"type": "gamepad_button_tap", "button": "a", "duration_ms": 80}
+                ]
+            }]
+        });
+        assert!(serde_json::from_value::<ActionLibrary>(raw).is_err());
+    }
+
+    #[test]
+    fn migrates_missing_suppression_on_keyboard_config() {
         let raw = serde_json::json!({
             "actions": [{
                 "action_id": "fortnite_emote_1",
@@ -320,10 +251,7 @@ mod tests {
                 "enabled": false,
                 "cooldown_ms": 60000,
                 "input_sequence": [
-                    {"type": "suspend_forwarder", "duration_ms": 3000},
-                    {"type": "gamepad_dpad", "direction": "down", "duration_ms": 200},
-                    {"type": "delay", "duration_ms": 150},
-                    {"type": "gamepad_button_tap", "button": "a", "duration_ms": 80}
+                    {"type": "key_tap", "key": "B", "duration_ms": 80}
                 ]
             }]
         });
