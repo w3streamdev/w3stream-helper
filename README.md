@@ -88,15 +88,17 @@ all hooks/devices.
 ## Movement-gated emote retry
 
 When `emoteRetry.enabled` is `true` (the default), an emote request is no
-longer one-shot. The helper fires the emote immediately and then keeps
-re-firing it every `retryIntervalMs` for as long as the physical Xbox
-controller still shows meaningful input. Controller state is sampled with the
-read-only `XInputGetState` API — no driver, no device changes, no input
-suppression. Once the streamer has been continuously idle for `idleRequiredMs`
-the emote is considered landed and the retry loop stops; `maxDurationMs` caps
-the loop so it can never run forever. A new emote request replaces any
-in-flight one. Set `emoteRetry.enabled` to `false` to keep the legacy
-one-shot + input-suppression behavior.
+longer one-shot. The helper fires the emote immediately and then assumes the
+physical Xbox controller is idle, counting down `idleRequiredMs`. Any
+non-neutral controller input resets that countdown *and* re-fires the emote
+(throttled by `retryIntervalMs` so a held stick can't spam keystrokes); an
+idle controller is left alone so the emote can land. Controller state is
+sampled with the read-only `XInputGetState` API — no driver, no device
+changes, no input suppression. Once the streamer has been continuously idle
+for `idleRequiredMs` the emote is considered landed and the loop stops;
+`maxDurationMs` caps it so it can never run forever. A new emote request
+replaces any in-flight one. Set `emoteRetry.enabled` to `false` to keep the
+legacy one-shot + input-suppression behavior.
 
 `%LOCALAPPDATA%\w3stream\actions.json` carries the settings under `emoteRetry`:
 
