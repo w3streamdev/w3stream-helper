@@ -66,6 +66,44 @@ On every `connect`, the helper sends an unsolicited:
 
 Commands: `health`, `actions.list`, `enabled`, `panic`, `panic.reset`, `trigger`.
 
+### Unsolicited events
+
+While a movement-gated emote is in-flight the helper pushes status events on
+each state transition. The extension can forward these to the relay so an
+overlay (separate deploy) can render a countdown ring / re-fire flashes
+without polling.
+
+```json
+{
+  "type": "emote_retry",
+  "phase": "started",
+  "emote_id": "fortnite_emote_1",
+  "idle_for_ms": 0,
+  "idle_required_ms": 5000,
+  "running_for_ms": 0,
+  "max_duration_ms": 60000,
+  "time_remaining_ms": 5000
+}
+```
+
+`phase` is one of:
+
+- `started` — emote just fired; overlay should show the countdown bar at
+  `idle_required_ms`.
+- `input_active` — non-neutral controller input detected; overlay resets
+  countdown to `idle_required_ms` (the helper has reset its idle timer).
+- `retry` — the emote keystroke sequence has been re-fired; overlay can
+  flash a re-fire indicator.
+- `idle_satisfied` — streamer was idle long enough; overlay shows landed
+  state and fades out.
+- `timeout` — `max_duration_ms` reached without idle; overlay shows
+  warning state and fades out.
+- `superseded` — a new emote request replaced this one; overlay can clean
+  up the old countdown.
+
+Events fire only on state transitions; the overlay interpolates the
+countdown locally between events using its own clock.
+
 ## Fortnite emote input suppression
 
 Fortnite emote actions can set `input_suppression_ms` in their action config.

@@ -1,5 +1,6 @@
 mod actions;
 mod emote_retry;
+mod events;
 mod executor;
 mod guard_client;
 mod input;
@@ -12,10 +13,10 @@ use log::{error, info};
 use serde_json::{json, Value};
 use simplelog::{ConfigBuilder, LevelFilter, WriteLogger};
 use std::fs::OpenOptions;
-use std::io::{stdin, stdout};
+use std::io::stdin;
 use std::path::PathBuf;
 
-use crate::protocol::{read_message, write_message};
+use crate::protocol::read_message;
 use crate::state::AppState;
 
 fn log_path() -> PathBuf {
@@ -47,7 +48,6 @@ fn main() -> Result<()> {
     let mut state = AppState::new();
 
     let mut stdin = stdin().lock();
-    let mut stdout = stdout().lock();
 
     // Send a hello so the extension knows the helper is alive + which version.
     let hello = json!({
@@ -56,7 +56,7 @@ fn main() -> Result<()> {
         "actions": state.actions_list(),
         "input_guard": { "available": guard_client::guard_available() },
     });
-    if let Err(e) = write_message(&mut stdout, &hello) {
+    if let Err(e) = events::emit(&hello) {
         error!("failed to send hello: {e}");
         return Err(e);
     }
@@ -69,7 +69,7 @@ fn main() -> Result<()> {
             }
             Ok(Some(msg)) => {
                 let reply = handle(&mut state, msg);
-                if let Err(e) = write_message(&mut stdout, &reply) {
+                if let Err(e) = events::emit(&reply) {
                     error!("write failed: {e}; exiting");
                     break;
                 }
