@@ -295,7 +295,12 @@ export function useEmoteRetryTimer(eventStreamUrl) {
           break;
 
         case 'retry':
-          // Bump a counter; the consumer renders a flash for ~250 ms.
+          // A retry event means the helper just re-fired the emote because
+          // input is still active — the helper's idle timer was reset to
+          // now. Reset our local clock too so the visual ring never drifts
+          // past current input (max drift becomes retry_interval_ms).
+          lastResetAt.current = performance.now();
+          setElapsed(0);
           setRetryFlash((n) => n + 1);
           clearTimeout(flashTimer.current);
           flashTimer.current = setTimeout(() => {}, 250);

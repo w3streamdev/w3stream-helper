@@ -188,6 +188,7 @@ fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
             let now = Instant::now();
             let idle_for_ms = now.duration_since(last_input_at).as_millis() as u64;
             let running_for_ms = now.duration_since(started_at).as_millis() as u64;
+            info!("[emote-retry] superseded emote={emote_id} runningForMs={running_for_ms}");
             emit_event("superseded", emote_id, idle_for_ms, running_for_ms, &config);
             return;
         }
