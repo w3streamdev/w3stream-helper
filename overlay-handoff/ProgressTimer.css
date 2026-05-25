@@ -1,0 +1,136 @@
+/* ProgressTimer — extracted from the Claude Design HUD prototype. */
+
+.pt {
+  position: relative;
+  display: inline-block;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pt-stack {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.pt-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform: translateZ(0);
+}
+.pt-spinner-host {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.pt-spinner {
+  position: absolute;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    #00e5ff 0%,
+    #3b82f6 28%,
+    #7c3aed 58%,
+    #ec4899 85%,
+    #00e5ff 100%
+  );
+  -webkit-mask: radial-gradient(
+    circle,
+    transparent var(--inner),
+    #000 calc(var(--inner) + 0.5px)
+  );
+  mask: radial-gradient(
+    circle,
+    transparent var(--inner),
+    #000 calc(var(--inner) + 0.5px)
+  );
+  animation: pt-spin 1.05s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(124, 58, 237, 0.35));
+  will-change: transform;
+}
+.pt[data-state='idle'] .pt-spinner,
+.pt[data-state='resetting'] .pt-spinner,
+.pt[data-state='done'] .pt-spinner {
+  opacity: 0;
+}
+@keyframes pt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pt-cross-host {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.pt-cross {
+  position: relative;
+  display: block;
+  transition: transform 280ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    filter 280ms ease;
+}
+.pt[data-state='done'] .pt-cross {
+  transform: scale(1.08);
+  filter: drop-shadow(0 0 14px rgba(255, 255, 255, 0.55));
+}
+.pt[data-state='resetting'] .pt-cross {
+  animation: pt-x-pulse 360ms ease-out;
+}
+@keyframes pt-x-pulse {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.pt-disc {
+  transition: fill 240ms ease;
+}
+.pt[data-state='done'] .pt-disc-bg {
+  animation: pt-done-pulse 480ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@keyframes pt-done-pulse {
+  0% {
+    transform: scale(0.92);
+  }
+  55% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.pt-label {
+  margin-top: 14px;
+  text-align: center;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: 0.18em;
+  color: #e7ebf3;
+  text-shadow: 0 0 12px rgba(231, 235, 243, 0.18);
+}
+.pt-label[data-state='done'] {
+  color: #39ff14;
+  text-shadow: 0 0 14px rgba(57, 255, 20, 0.7);
+}
+.pt-label[data-state='resetting'],
+.pt-label[data-state='idle-after-reset'] {
+  color: #ff007a;
+  text-shadow: 0 0 12px rgba(255, 0, 122, 0.55);
+}
