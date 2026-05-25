@@ -197,9 +197,12 @@ RAF / interval loop to render the countdown smoothly between events.
 
 ## Edge cases / gotchas
 
-- **No controller connected.** Helper treats no XInput device as idle.
-  Overlay will see `started` → 5 s of nothing → `idle_satisfied`.
-  Render it the same as a normal idle-completed flow.
+- **No controller connected.** Helper still watches keyboard + mouse via
+  low-level observer hooks, so a KB+M player's input resets the idle
+  timer the same way controller input does. If the streamer is truly
+  idle on every input surface, the overlay sees `started` → 5 s of
+  nothing → `idle_satisfied`. Render that the same as a normal
+  idle-completed flow.
 - **Helper config disabled** (`emoteRetry.enabled = false`). No events
   fire at all — the emote runs through the legacy one-shot path. The
   overlay should not assume an event will arrive after every chat

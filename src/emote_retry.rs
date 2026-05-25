@@ -13,10 +13,17 @@
 //! window the emote is considered landed and the loop stops. A
 //! `max_duration_ms` cap guarantees the loop can never run forever.
 //!
-//! Controller state is read with `XInputGetState` — a read-only, built-in
-//! Windows API. Nothing here installs drivers, suppresses the streamer's
-//! input, or modifies the physical pad. On non-Windows builds the gamepad
-//! poll yields `None`, which is treated as idle so the loop self-terminates.
+//! Input is watched on two surfaces so the feature works whether the
+//! streamer plays on controller or on keyboard + mouse:
+//!   - Gamepad — `XInputGetState`, a read-only built-in Windows API.
+//!   - Keyboard + mouse — low-level `WH_KEYBOARD_LL` / `WH_MOUSE_LL`
+//!     observer hooks in `activity`. Hooks only observe, never block, and
+//!     filter `LLKHF_INJECTED` / `LLMHF_INJECTED` so the helper's own
+//!     re-fired keystrokes don't count as user activity.
+//!
+//! Nothing here installs drivers, suppresses the streamer's input, or
+//! modifies the physical pad. On non-Windows builds both sources yield
+//! `None`, which is treated as idle so the loop self-terminates.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -27,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::actions::Action;
+use crate::activity;
 use crate::events;
 use crate::input;
 
@@ -134,6 +142,10 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 /// keystroke failure) and then spawns the retry loop. A new call supersedes
 /// any in-flight loop. Returns the result of the immediate attempt.
 pub fn on_emote_requested(action: Action, config: EmoteRetryConfig) -> anyhow::Result<()> {
+    // Make sure the keyboard/mouse observer is running so the retry loop
+    // can detect kbm activity. Idempotent — first call spawns the thread.
+    activity::start_observer();
+
     let generation = GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     let emote_id = action.action_id.clone();
 
@@ -179,6 +191,9 @@ fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
     let mut last_attempt_at = started_at;
     let mut last_input_at = started_at;
     let mut was_active = false;
+    // Snapshot the kbm activity counter so the first tick only treats
+    // events that happen AFTER the loop starts as user activity.
+    let mut last_kbm_seen = activity::last_activity_ms().unwrap_or(0);
 
     loop {
         // A newer emote request has taken over — emit a final superseded
@@ -196,9 +211,17 @@ fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
         thread::sleep(TICK);
         let now = Instant::now();
 
-        let input_active = poll_gamepad()
+        // Watch BOTH input surfaces — gamepad and keyboard/mouse — so the
+        // emote retry works whether the streamer is on a controller or on
+        // KB+M. Keyboard/mouse activity comes from the global observer in
+        // `activity`, which filters out our own injected re-fires.
+        let gamepad_active = poll_gamepad()
             .map(|snapshot| is_gamepad_input_active(&snapshot, &config))
             .unwrap_or(false);
+        let current_kbm = activity::last_activity_ms().unwrap_or(0);
+        let kbm_active = current_kbm > last_kbm_seen;
+        last_kbm_seen = current_kbm;
+        let input_active = gamepad_active || kbm_active;
 
         // An idle controller is assumed to mean the emote can land, so the
         // idle countdown is left to run. Any non-neutral input resets that
