@@ -219,3 +219,227 @@ RAF / interval loop to render the countdown smoothly between events.
 - No overlay auth — it's a public read-only fan-out tied to a streamer
   id. If you need per-streamer secrecy, that's a relay redesign and
   out of scope for this feature.
+
+---
+
+## Wiring the ProgressTimer component
+
+The overlay ships with a `ProgressTimer` React component (handoff
+bundle: `progress-timer/project/Progress Timer.html`). It supports two
+modes:
+
+- **Self-driven**: pass `isRunning` / `resetTrigger`, component runs
+  its own RAF clock for `duration` ms then fires `onComplete`.
+- **Parent-driven**: pass `state` + `elapsedOverride`, component
+  renders exactly what the parent says. **Use this mode** — the helper
+  is the source of truth for retry state, and we want every visual
+  transition to match an event from upstream.
+
+### Phase → component state mapping
+
+| `emote_retry.phase` | `ProgressTimer.state` | extra overlay action |
+| --- | --- | --- |
+| `started` | `running` (elapsed=0) | reset local clock; ensure overlay visible |
+| `input_active` | `resetting` for ~360ms, then `running` (elapsed=0) | the pink-X flash *is* the "you moved" signal |
+| `retry` | (no state change) | pulse a small `RE-FIRE` badge next to the ring |
+| `idle_satisfied` | `done` | hold ~1.5 s then fade to `idle`, hide overlay |
+| `timeout` | `resetting` → `idle` | hold ~600 ms then hide; optional yellow tint via CSS |
+| `superseded` | `resetting` → `idle` | hide; the new emote's `started` event takes over |
+
+### `useEmoteRetryTimer` hook (drop-in)
+
+```jsx
+import { useEffect, useRef, useState } from 'react';
+
+export function useEmoteRetryTimer(eventStreamUrl) {
+  const [pending, setPending] = useState(null);   // { emoteId } | null
+  const [state, setState] = useState('idle');     // idle | running | resetting | done
+  const [elapsed, setElapsed] = useState(0);
+  const [duration, setDuration] = useState(5000); // mirrors idle_required_ms
+  const [retryFlash, setRetryFlash] = useState(0); // bump on each `retry`
+
+  const lastResetAt = useRef(0);
+  const rafRef = useRef(0);
+  const flashTimer = useRef(null);
+  const resumeTimer = useRef(null);
+  const exitTimer = useRef(null);
+
+  useEffect(() => {
+    const ws = new WebSocket(eventStreamUrl);
+
+    ws.onmessage = (msg) => {
+      const e = JSON.parse(msg.data);
+      if (e.type !== 'emote_retry') return;
+
+      setDuration(e.idle_required_ms);
+
+      switch (e.phase) {
+        case 'started':
+          clearTimeout(resumeTimer.current);
+          clearTimeout(exitTimer.current);
+          setPending({ emoteId: e.emote_id });
+          lastResetAt.current = performance.now();
+          setElapsed(0);
+          setState('running');
+          break;
+
+        case 'input_active':
+          // Pink-X flash, then resume the countdown from zero.
+          setState('resetting');
+          clearTimeout(resumeTimer.current);
+          resumeTimer.current = setTimeout(() => {
+            lastResetAt.current = performance.now();
+            setElapsed(0);
+            setState('running');
+          }, 360);
+          break;
+
+        case 'retry':
+          // Bump a counter; the consumer renders a flash for ~250 ms.
+          setRetryFlash((n) => n + 1);
+          clearTimeout(flashTimer.current);
+          flashTimer.current = setTimeout(() => {}, 250);
+          break;
+
+        case 'idle_satisfied':
+          setState('done');
+          clearTimeout(exitTimer.current);
+          exitTimer.current = setTimeout(() => {
+            setPending(null);
+            setState('idle');
+          }, 1500);
+          break;
+
+        case 'timeout':
+        case 'superseded':
+          setState('resetting');
+          clearTimeout(exitTimer.current);
+          exitTimer.current = setTimeout(() => {
+            setPending(null);
+            setState('idle');
+          }, 600);
+          break;
+      }
+    };
+
+    return () => {
+      ws.close();
+      clearTimeout(resumeTimer.current);
+      clearTimeout(exitTimer.current);
+      clearTimeout(flashTimer.current);
+    };
+  }, [eventStreamUrl]);
+
+  // Local interpolation — only runs while counting down.
+  useEffect(() => {
+    if (state !== 'running') return;
+    const tick = (now) => {
+      setElapsed(Math.min(duration, now - lastResetAt.current));
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [state, duration]);
+
+  return { state, elapsed, duration, pending, retryFlash };
+}
+```
+
+### Overlay page
+
+```jsx
+import { useEmoteRetryTimer } from './useEmoteRetryTimer';
+import { ProgressTimer } from './ProgressTimer';
+
+export default function EmoteOverlay({ streamerId }) {
+  const url = `wss://relay.example.com/streams/${streamerId}/events`;
+  const { state, elapsed, duration, pending, retryFlash } =
+    useEmoteRetryTimer(url);
+
+  if (!pending) return null; // OBS browser source stays transparent
+
+  const label =
+    state === 'done' ? 'LANDED!' :
+    state === 'resetting' ? 'MOVED' :
+    pending.emoteId.toUpperCase();
+
+  return (
+    <div className="emote-overlay">
+      <ProgressTimer
+        duration={duration}
+        size={260}
+        state={state}
+        elapsedOverride={elapsed}
+        label={label}
+      />
+      <RefireFlash key={retryFlash} />
+    </div>
+  );
+}
+
+// 250ms pulse on each retry event. Keyed on retryFlash so a new
+// event remounts and replays the animation cleanly.
+function RefireFlash() {
+  return <div className="refire-flash">RE-FIRE</div>;
+}
+```
+
+```css
+.emote-overlay {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  display: grid;
+  place-items: center;
+  pointer-events: none; /* OBS overlay is non-interactive */
+}
+.refire-flash {
+  position: absolute;
+  top: -12px;
+  font: 600 11px/1 'IBM Plex Mono', monospace;
+  letter-spacing: 0.18em;
+  color: #ff007a;
+  text-shadow: 0 0 8px rgba(255, 0, 122, 0.7);
+  opacity: 0;
+  animation: refire-pulse 250ms ease-out forwards;
+}
+@keyframes refire-pulse {
+  0%   { opacity: 0; transform: scale(0.85); }
+  30%  { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 0; transform: scale(1); }
+}
+```
+
+### Why this works
+
+- `state` + `elapsedOverride` drive the component in parent-driven
+  mode — every visual transition is sourced from an upstream event,
+  so the helper and overlay can never disagree about which phase
+  we're in.
+- The RAF loop in `useEmoteRetryTimer` only interpolates *between*
+  events. It uses `performance.now()` so clock skew with the helper
+  doesn't matter — `lastResetAt` resets every `started` /
+  `input_active`, and the local clock only ever counts up to
+  `idle_required_ms`.
+- The `resetting` state is reused for three different "negative"
+  transitions (input reset, timeout, superseded) because the pink-X
+  animation reads as "interrupted" in every case. If yellow timeout
+  styling is wanted later, override `[data-state="resetting"]` via a
+  modifier class set on a wrapper.
+- `pending = null` keeps the overlay completely transparent when no
+  emote is in flight — OBS gets nothing in front of the game.
+
+### Things to confirm before wiring
+
+- **Relay event stream URL & framing.** Above assumes a plain
+  WebSocket carrying raw `emote_retry` JSON. If the relay wraps events
+  in an envelope (`{event: "...", data: {...}}`) or uses SSE, swap
+  the `ws.onmessage` handler accordingly — the rest of the hook is
+  unchanged.
+- **One overlay per streamer.** The hook holds one pending emote at
+  a time. `superseded` is the only way the previous one gets
+  replaced; if the relay multiplexes multiple streamers onto one
+  socket you'll need to key by `streamer_id`.
+- **OBS browser source size.** `ProgressTimer` is responsive but the
+  outer `.emote-overlay` positions it; pick the size/position once
+  with the streamer rather than making it draggable in the overlay.
