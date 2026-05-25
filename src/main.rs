@@ -1,4 +1,5 @@
 mod actions;
+mod activity;
 mod emote_retry;
 mod events;
 mod executor;
