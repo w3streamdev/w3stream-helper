@@ -1,6 +1,6 @@
 [package]
 name = "w3stream-helper"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Native helper for the w3stream Agent browser extension — sends keystrokes to local games via Win32 SendInput."
 license = "Proprietary"
