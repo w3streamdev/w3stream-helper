@@ -24,8 +24,10 @@ use std::time::{Duration, Instant};
 
 use log::info;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::actions::Action;
+use crate::events;
 use crate::input;
 
 /// How often the retry loop wakes to sample the controller. Small enough to
@@ -137,12 +139,37 @@ pub fn on_emote_requested(action: Action, config: EmoteRetryConfig) -> anyhow::R
 
     let attempt = input::play(&action);
     info!("[emote-retry] started emote={emote_id}");
+    emit_event("started", &emote_id, 0, 0, &config);
 
     let _ = thread::Builder::new()
         .name("w3stream-emote-retry".into())
         .spawn(move || retry_loop(generation, action, config));
 
     attempt
+}
+
+/// Push a retry-loop status event to the extension. The overlay listens for
+/// `type=emote_retry` and uses `phase` + `time_remaining_ms` to drive the
+/// countdown ring; `idle_required_ms` lets it size the ring correctly on the
+/// first event without waiting for a separate config push.
+fn emit_event(
+    phase: &str,
+    emote_id: &str,
+    idle_for_ms: u64,
+    running_for_ms: u64,
+    config: &EmoteRetryConfig,
+) {
+    let time_remaining_ms = config.idle_required_ms.saturating_sub(idle_for_ms);
+    let _ = events::emit(&json!({
+        "type": "emote_retry",
+        "phase": phase,
+        "emote_id": emote_id,
+        "idle_for_ms": idle_for_ms,
+        "idle_required_ms": config.idle_required_ms,
+        "running_for_ms": running_for_ms,
+        "max_duration_ms": config.max_duration_ms,
+        "time_remaining_ms": time_remaining_ms,
+    }));
 }
 
 fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
@@ -154,8 +181,14 @@ fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
     let mut was_active = false;
 
     loop {
-        // A newer emote request has taken over — drop this loop silently.
+        // A newer emote request has taken over — emit a final superseded
+        // event so the overlay can fade its old countdown, then drop this
+        // loop.
         if GENERATION.load(Ordering::Acquire) != generation {
+            let now = Instant::now();
+            let idle_for_ms = now.duration_since(last_input_at).as_millis() as u64;
+            let running_for_ms = now.duration_since(started_at).as_millis() as u64;
+            emit_event("superseded", emote_id, idle_for_ms, running_for_ms, &config);
             return;
         }
 
@@ -174,6 +207,8 @@ fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
             last_input_at = now;
             if !was_active {
                 info!("[emote-retry] input active; idle timer reset");
+                let running_for_ms = now.duration_since(started_at).as_millis() as u64;
+                emit_event("input_active", emote_id, 0, running_for_ms, &config);
             }
             if now.duration_since(last_attempt_at).as_millis() as u64
                 >= config.retry_interval_ms
@@ -183,6 +218,8 @@ fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
                 }
                 last_attempt_at = now;
                 info!("[emote-retry] retry emote={emote_id}");
+                let running_for_ms = now.duration_since(started_at).as_millis() as u64;
+                emit_event("retry", emote_id, 0, running_for_ms, &config);
             }
         }
         was_active = input_active;
@@ -192,11 +229,13 @@ fn retry_loop(generation: u64, action: Action, config: EmoteRetryConfig) {
 
         if running_for_ms >= config.max_duration_ms {
             info!("[emote-retry] timeout emote={emote_id}");
+            emit_event("timeout", emote_id, idle_for_ms, running_for_ms, &config);
             return;
         }
 
         if idle_for_ms >= config.idle_required_ms {
             info!("[emote-retry] idle satisfied emote={emote_id} idleForMs={idle_for_ms}");
+            emit_event("idle_satisfied", emote_id, idle_for_ms, running_for_ms, &config);
             return;
         }
     }
