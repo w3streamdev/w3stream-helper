@@ -1,13 +1,15 @@
 # Overlay handoff — drop-in files
 
 These are ready-to-paste React files for the overlay Vercel repo. They
-wire the helper's `emote_retry` events (see `../EMOTE_RETRY_OVERLAY.md`
-for the wire spec) to the ProgressTimer component from Claude Design.
+wire the helper's `emote_retry` events (full wire spec in
+`EMOTE_RETRY_OVERLAY.md` in this same folder) to the ProgressTimer
+component from Claude Design.
 
 ## Files
 
 | file | what it is |
 | --- | --- |
+| `EMOTE_RETRY_OVERLAY.md` | full feature spec — read this first |
 | `ProgressTimer.jsx` | React port of the Claude Design HUD prototype |
 | `ProgressTimer.css` | styles for the timer (segments, spinner, cross) |
 | `useEmoteRetryTimer.js` | hook: subscribes to the relay WS, returns props for the timer |
